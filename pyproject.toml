@@ -1,0 +1,25 @@
+[project]
+name = "chitrika"
+version = "0.1.0"
+description = "Desktop-native AI companion — a persistent digital person, not a chatbot"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sqlmodel>=0.0.22",
+    "pydantic-settings>=2.7.0",
+    "httpx>=0.28.0",
+    "apscheduler>=3.11.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.25.0",
+    "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
