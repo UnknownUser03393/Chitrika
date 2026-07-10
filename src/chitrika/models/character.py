@@ -1,13 +1,19 @@
-"""Character model — identity, personality, and avatar."""
+"""Character model: persona identity, prompt, and provider binding."""
 
-from __future__ import annotations
-
-import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING, Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
 
+from src.chitrika.models.base import new_id
 from src.chitrika.utils.datetime_helpers import utcnow
+
+if TYPE_CHECKING:
+    from src.chitrika.models.conversation import Conversation
+    from src.chitrika.models.emotion import EmotionState
+    from src.chitrika.models.heartbeat import HeartbeatTask, ScheduledMessage
+    from src.chitrika.models.memory import Memory
+    from src.chitrika.models.provider import LLMProvider
 
 
 class Character(SQLModel, table=True):
@@ -15,10 +21,7 @@ class Character(SQLModel, table=True):
 
     __tablename__ = "characters"
 
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-    )
+    id: str = Field(default_factory=new_id, primary_key=True)
     name: str = Field(
         unique=True,
         index=True,
@@ -27,14 +30,16 @@ class Character(SQLModel, table=True):
     display_name: str = Field(
         description="Human-readable name, e.g. '徐悦婷'",
     )
-    avatar_url: str | None = Field(default=None)
-    description: str | None = Field(
+    avatar_url: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(
         default=None,
         description="Short biographical description",
     )
-    provider: str = Field(
-        default="deepseek",
-        description="LLM provider slug: 'deepseek', 'openai', etc.",
+    provider_id: Optional[str] = Field(
+        default=None,
+        foreign_key="llm_providers.id",
+        index=True,
+        description="Configured LLM provider used by this character",
     )
     personality_prompt: str = Field(
         default="",
@@ -50,7 +55,15 @@ class Character(SQLModel, table=True):
     )
     enabled: bool = Field(
         default=True,
+        index=True,
         description="Whether this character is active",
     )
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+    provider: Optional["LLMProvider"] = Relationship(back_populates="characters")
+    conversations: list["Conversation"] = Relationship(back_populates="character")
+    emotion_state: Optional["EmotionState"] = Relationship(back_populates="character")
+    memories: list["Memory"] = Relationship(back_populates="character")
+    heartbeat_tasks: list["HeartbeatTask"] = Relationship(back_populates="character")
+    scheduled_messages: list["ScheduledMessage"] = Relationship(back_populates="character")

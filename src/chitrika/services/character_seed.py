@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from src.chitrika.models.character import Character
 from src.chitrika.models.emotion import EmotionState
+from src.chitrika.services.provider_service import get_default_provider
 
 logger = logging.getLogger("chitrika.seed")
 
@@ -44,6 +45,7 @@ def seed_default_character(session: Session) -> Character | None:
         return None
 
     prompt = _load_personality_prompt()
+    provider = get_default_provider(session)
 
     character = Character(
         name="alvia",
@@ -54,6 +56,7 @@ def seed_default_character(session: Session) -> Character | None:
         color="#E84A7A",
         enabled=True,
     )
+    character.provider_id = provider.id if provider else None
     session.add(character)
     session.flush()  # get the ID
 

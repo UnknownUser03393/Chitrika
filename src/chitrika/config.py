@@ -31,7 +31,7 @@ class ChitrikaConfig(BaseSettings):
     loneliness_threshold: float = 0.6
 
     # --- CORS ---
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost:8080,http://127.0.0.1:8080"
 
     @property
     def cors_origin_list(self) -> list[str]:

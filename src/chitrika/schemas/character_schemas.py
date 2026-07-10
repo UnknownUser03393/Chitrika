@@ -43,6 +43,7 @@ class CharacterResponse(BaseModel):
     name: str
     display_name: str
     description: str | None
+    personality_prompt: str = ""
     provider: str = "deepseek"
     initials: str
     color: str

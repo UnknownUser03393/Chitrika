@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from sqlmodel import Session, select
 
-from src.chitrika.models.provider import LLMProvider
+from src.chitrika.models.provider import LLMProvider, LLMProviderModel
 
 logger = logging.getLogger("chitrika.providers")
 
@@ -54,16 +53,23 @@ def get_default_provider(session: Session) -> LLMProvider | None:
 
 
 def resolve_provider_for_character(
-    session: Session, provider_name: str
+    session: Session, provider_name: str | None = None, provider_id: str | None = None
 ) -> LLMProvider | None:
-    """Resolve the provider config for a given provider name string.
+    """Resolve the provider config for a character.
 
-    Falls back to the default provider if the named provider is not found.
+    Prefer a direct provider id. Fall back to a provider slug, then default.
     """
-    provider = get_provider_by_name(session, provider_name)
-    if provider is not None:
-        return provider
-    logger.warning("Provider '%s' not found, falling back to default", provider_name)
+    if provider_id:
+        provider = get_provider_by_id(session, provider_id)
+        if provider is not None and provider.enabled:
+            return provider
+
+    if provider_name:
+        provider = get_provider_by_name(session, provider_name)
+        if provider is not None:
+            return provider
+        logger.warning("Provider '%s' not found, falling back to default", provider_name)
+
     return get_default_provider(session)
 
 
@@ -88,32 +94,33 @@ def create_llm_client(api_key: str, base_url: str):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Utility helpers
-# ---------------------------------------------------------------------------
+def provider_model_names(provider: LLMProvider) -> list[str]:
+    """Return the enabled model names configured for a provider."""
+    return provider.model_names
 
 
-def mask_api_key(key: str) -> str:
-    """Mask an API key for display: show first 4 + last 4 chars."""
-    if not key:
-        return "****"
-    if len(key) <= 8:
-        if len(key) >= 4:
-            return key[:2] + "..." + key[-2:]
-        return "****"
-    return key[:4] + "..." + key[-4:]
+def replace_provider_models(
+    session: Session,
+    provider: LLMProvider,
+    models: list[str],
+) -> None:
+    """Replace a provider's stored model catalog."""
+    existing = session.exec(
+        select(LLMProviderModel).where(LLMProviderModel.provider_id == provider.id)
+    ).all()
+    for model in existing:
+        session.delete(model)
 
-
-def parse_models_json(models_json: str) -> list[str]:
-    """Safely parse the models JSON field."""
-    if not models_json:
-        return []
-    try:
-        return json.loads(models_json)
-    except (json.JSONDecodeError, TypeError):
-        return []
-
-
-def serialize_models(models: list[str]) -> str:
-    """Serialize a model list to JSON string for storage."""
-    return json.dumps(models, ensure_ascii=False)
+    seen: set[str] = set()
+    for name in models:
+        model_name = name.strip()
+        if not model_name or model_name in seen:
+            continue
+        seen.add(model_name)
+        session.add(
+            LLMProviderModel(
+                provider_id=provider.id,
+                name=model_name,
+                display_name=model_name,
+            )
+        )

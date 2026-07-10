@@ -31,13 +31,11 @@ class PromptService:
         mood = compute_mood(emotions)
         loneliness = compute_loneliness(emotions)
 
-        # Emotion summary
         top_emotions = sorted(emotions.items(), key=lambda kv: abs(kv[1]), reverse=True)
         emotion_summary = ", ".join(
             f"{name}={value:+.2f}" for name, value in top_emotions[:4]
         )
 
-        # Memory context (top 10)
         memory_lines: list[str] = []
         active_memories = [m for m in memories if not m.is_forgotten]
         for mem in sorted(active_memories, key=lambda m: m.importance, reverse=True)[:10]:
@@ -45,31 +43,26 @@ class PromptService:
 
         memory_block = "\n".join(memory_lines) if memory_lines else "（还没有关于用户的记忆）"
 
-        # Build
         parts: list[str] = []
 
-        # 1. Character personality (the bulk of the prompt)
         if character.personality_prompt:
             parts.append(character.personality_prompt)
         else:
             parts.append(f"你是{character.display_name}。")
 
-        # 2. Current emotional state
         parts.append("")
         parts.append("=== 当前状态 ===")
         parts.append(f"心情：{mood}")
         parts.append(f"情绪：{emotion_summary}")
         parts.append(f"孤独感：{loneliness:.2f}")
 
-        # 3. Memories
         parts.append("")
         parts.append("=== 你记得的事 ===")
         parts.append(memory_block)
 
-        # 4. Instructions
         parts.append("")
         parts.append("=== 指示 ===")
-        parts.append(f"以{character.display_name}的身份回复。保持角色一致性。")
+        parts.append(f"以{character.display_name}的身份回复，保持角色一致性。")
         parts.append("使用短消息，一次只说一件事。不要写长段落。")
 
         return "\n".join(parts)
@@ -122,18 +115,14 @@ class PromptService:
         loneliness = compute_loneliness(emotions)
 
         return f"""你是{character.display_name}。
-
 你当前的状态：
 心情：{mood}
 孤独感：{loneliness:.2f}（0=不孤独，1=非常孤独）
-
 你已经 {hours_since_last:.1f} 小时没有和用户说话了。
-
 根据你的性格，你现在想主动联系用户吗？
-
-请**只**回复一个JSON对象（不要有其他文字）：
+请只回复一个 JSON 对象（不要有其他文字）：
 {{
   "action": "now" | "wait" | "cancel",
-  "wait_minutes": <仅在action="wait"时填写，等待分钟数>,
-  "message_content": "<如果你想现在发消息，这裡写消息内容>"
+  "wait_minutes": <仅在 action="wait" 时填写，等待分钟数>,
+  "message_content": "<如果你想现在发消息，这里写消息内容>"
 }}"""

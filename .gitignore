@@ -18,3 +18,7 @@ uv.lock
 .mypy_cache/
 .ruff_cache/
 node_modules/
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/vite-dev*.log
+skill_0624.txt

@@ -1,13 +1,15 @@
-"""Emotion state model — one row per character, eight dimensions."""
+"""Emotion state model: one row per character, eight dimensions."""
 
-from __future__ import annotations
-
-import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Relationship, SQLModel
 
+from src.chitrika.models.base import new_id
 from src.chitrika.utils.datetime_helpers import utcnow
+
+if TYPE_CHECKING:
+    from src.chitrika.models.character import Character
 
 # Plutchik-inspired emotion dimensions (module-level constant, not a DB column)
 DIMENSIONS: tuple[str, ...] = (
@@ -31,10 +33,7 @@ class EmotionState(SQLModel, table=True):
 
     __tablename__ = "emotion_states"
 
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        primary_key=True,
-    )
+    id: str = Field(default_factory=new_id, primary_key=True)
     character_id: str = Field(
         foreign_key="characters.id",
         unique=True,
@@ -51,9 +50,10 @@ class EmotionState(SQLModel, table=True):
     anticipation: float = Field(default=0.0, ge=-1.0, le=1.0)
     surprise: float = Field(default=0.0, ge=-1.0, le=1.0)
     disgust: float = Field(default=0.0, ge=-1.0, le=1.0)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
 
-    created_at: datetime = Field(default_factory=utcnow)
-    updated_at: datetime = Field(default_factory=utcnow)
+    character: "Character" = Relationship(back_populates="emotion_state")
 
     # ------------------------------------------------------------------
     # Convenience

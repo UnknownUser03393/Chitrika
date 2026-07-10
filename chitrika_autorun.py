@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = Path(r"D:\Development\Chitrika-frontend")
+FRONTEND_DIR = BACKEND_DIR / "src" / "frontend"
 
 
 def _find_exe(name: str) -> str:
@@ -33,10 +33,10 @@ def main() -> None:
     print("============================================")
     print()
     print("[1/2] Starting backend (uvicorn) on :8000 ...")
-    print("[2/2] Starting frontend (vite) on :5173 ...")
+    print("[2/2] Starting frontend (vite) on :8080 ...")
     print()
     print("  Backend  → http://localhost:8000")
-    print("  Frontend → http://localhost:5173")
+    print("  Frontend → http://127.0.0.1:8080")
     print()
     print("Press Ctrl+C to stop all servers.")
     print()

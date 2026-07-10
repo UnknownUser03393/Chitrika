@@ -15,10 +15,9 @@ from src.chitrika.schemas.provider_schemas import (
     LLMProviderUpdate,
 )
 from src.chitrika.services.provider_service import (
+    provider_model_names,
     get_provider_by_id,
-    mask_api_key,
-    parse_models_json,
-    serialize_models,
+    replace_provider_models,
     create_llm_client,
 )
 from src.chitrika.utils.datetime_helpers import utcnow
@@ -34,15 +33,19 @@ router = APIRouter(tags=["providers"])
 
 
 def _model_to_response(p: LLMProvider) -> dict:
-    """Convert a DB provider to a response dict with keys masked."""
+    """Convert a DB provider to the API response shape.
+
+    Chitrika is a local desktop app, so the settings UI intentionally receives
+    the plaintext key to make provider debugging less painful.
+    """
     return {
         "id": p.id,
         "name": p.name,
         "display_name": p.display_name,
-        "api_key": mask_api_key(p.api_key),
+        "api_key": p.api_key,
         "base_url": p.base_url,
         "default_model": p.default_model,
-        "models": parse_models_json(p.models_json),
+        "models": provider_model_names(p),
         "is_default": p.is_default,
         "enabled": p.enabled,
         "created_at": p.created_at,
@@ -111,10 +114,11 @@ def create_provider(
         api_key=body.api_key,
         base_url=body.base_url,
         default_model=body.default_model,
-        models_json=serialize_models(body.models),
         is_default=body.is_default,
     )
     session.add(provider)
+    session.flush()
+    replace_provider_models(session, provider, body.models)
     session.commit()
     session.refresh(provider)
     logger.info("Created provider '%s' (id=%s)", provider.name, provider.id)
@@ -144,9 +148,8 @@ def update_provider(
     if update_data.get("is_default"):
         _unset_default(session, exclude_id=provider_id)
 
-    # Serialize models list to JSON string
     if "models" in update_data:
-        update_data["models_json"] = serialize_models(update_data.pop("models"))
+        replace_provider_models(session, provider, update_data.pop("models"))
 
     for key, value in update_data.items():
         setattr(provider, key, value)

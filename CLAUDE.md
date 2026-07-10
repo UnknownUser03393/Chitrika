@@ -19,7 +19,7 @@ start.bat          # Command Prompt
 # Run the API server (reads .env for DEEPSEEK_API_KEY, etc.)
 uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
-# Start frontend dev server (from D:\Development\Chitrika-frontend)
+# Start frontend dev server (from src/frontend)
 pnpm dev
 
 # Run all tests
@@ -123,4 +123,4 @@ All settings are loaded via `pydantic-settings` from environment / `.env`:
 - `HEARTBEAT_INTERVAL_MINUTES` — default `5`
 - `EMOTION_DECAY_RATE` — default `0.15`
 - `LONELINESS_THRESHOLD` — default `0.6`
-- `CORS_ORIGINS` — comma-separated, default `http://localhost:5173,http://localhost:3000`
+- `CORS_ORIGINS` — comma-separated, default `http://localhost:5173,http://localhost:3000,http://localhost:8080,http://127.0.0.1:8080`

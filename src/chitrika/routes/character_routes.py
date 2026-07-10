@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from src.chitrika.database import get_session
 from src.chitrika.models.character import Character
 from src.chitrika.models.emotion import EmotionState
+from src.chitrika.services.provider_service import get_provider_by_name
 from src.chitrika.utils.datetime_helpers import utcnow
 from src.chitrika.schemas.character_schemas import (
     CharacterCreate,
@@ -17,6 +18,24 @@ from src.chitrika.schemas.character_schemas import (
 )
 
 router = APIRouter(tags=["characters"])
+
+
+def _character_to_response(character: Character) -> dict:
+    """Convert a character model to the stable API response shape."""
+    return {
+        "id": character.id,
+        "name": character.name,
+        "display_name": character.display_name,
+        "description": character.description,
+        "personality_prompt": character.personality_prompt,
+        "provider": character.provider.name if character.provider else "deepseek",
+        "initials": character.initials,
+        "color": character.color,
+        "avatar_url": character.avatar_url,
+        "enabled": character.enabled,
+        "created_at": character.created_at,
+        "updated_at": character.updated_at,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +48,7 @@ def list_characters(
 ) -> dict:
     """List all characters."""
     characters = session.exec(select(Character)).all()
-    return {"characters": [CharacterResponse.model_validate(c) for c in characters]}
+    return {"characters": [_character_to_response(c) for c in characters]}
 
 
 # ---------------------------------------------------------------------------
@@ -40,14 +59,14 @@ def list_characters(
 def get_character(
     character_id: str,
     session: Session = Depends(get_session),
-) -> Character:
+) -> dict:
     """Get a single character by ID."""
     character = session.exec(
         select(Character).where(Character.id == character_id)
     ).first()
     if character is None:
         raise HTTPException(status_code=404, detail="Character not found")
-    return character
+    return _character_to_response(character)
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +77,7 @@ def get_character(
 def create_character(
     body: CharacterCreate,
     session: Session = Depends(get_session),
-) -> Character:
+) -> dict:
     """Create a new character with a neutral emotion state."""
     # Check for duplicate name
     existing = session.exec(
@@ -70,7 +89,14 @@ def create_character(
             detail=f"Character with name '{body.name}' already exists",
         )
 
-    character = Character(**body.model_dump())
+    data = body.model_dump()
+    provider_name = data.pop("provider", None)
+    provider = get_provider_by_name(session, provider_name) if provider_name else None
+
+    character = Character(
+        **data,
+        provider_id=provider.id if provider else None,
+    )
     session.add(character)
     session.flush()
 
@@ -79,7 +105,7 @@ def create_character(
     session.add(emotion)
     session.commit()
     session.refresh(character)
-    return character
+    return _character_to_response(character)
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +117,7 @@ def update_character(
     character_id: str,
     body: CharacterUpdate,
     session: Session = Depends(get_session),
-) -> Character:
+) -> dict:
     """Update an existing character."""
     character = session.exec(
         select(Character).where(Character.id == character_id)
@@ -100,13 +126,18 @@ def update_character(
         raise HTTPException(status_code=404, detail="Character not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "provider" in update_data:
+        provider_name = update_data.pop("provider")
+        provider = get_provider_by_name(session, provider_name) if provider_name else None
+        character.provider_id = provider.id if provider else None
+
     for key, value in update_data.items():
         setattr(character, key, value)
     character.updated_at = utcnow()
 
     session.commit()
     session.refresh(character)
-    return character
+    return _character_to_response(character)
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """
 toastlib - library calling win10+ toast notification service.
-<b>You must registerApplication first.</b>
+<b>You must registerApplication first.</b> or ur mther died
 """
 
 import ctypes

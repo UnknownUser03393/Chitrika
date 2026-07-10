@@ -36,14 +36,14 @@ class LLMProviderUpdate(BaseModel):
 
 
 class LLMProviderResponse(BaseModel):
-    """A provider returned to the client (API key is masked)."""
+    """A provider returned to the local client."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     name: str
     display_name: str
-    api_key: str  # masked in response: first4...last4
+    api_key: str
     base_url: str
     default_model: str
     models: list[str]

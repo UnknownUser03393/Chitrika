@@ -57,24 +57,24 @@ async def lifespan(_app: FastAPI) -> Any:  # noqa: RUF029
     try:
         from src.chitrika.database import get_session as _gs
         from src.chitrika.models.provider import LLMProvider
+        from src.chitrika.services.provider_service import replace_provider_models
         from sqlmodel import select
 
         session = next(_gs())
         try:
             existing = session.exec(select(LLMProvider)).first()
-            if existing is None and config.deepseek_api_key:
-                import json
-
+            if existing is None:
                 provider = LLMProvider(
                     name="deepseek",
                     display_name="DeepSeek",
                     api_key=config.deepseek_api_key,
                     base_url=config.deepseek_base_url,
                     default_model=config.deepseek_model,
-                    models_json=json.dumps([config.deepseek_model]),
                     is_default=True,
                 )
                 session.add(provider)
+                session.flush()
+                replace_provider_models(session, provider, [config.deepseek_model])
                 session.commit()
                 logger.info("Default LLM provider 'deepseek' seeded from environment")
         finally:
@@ -144,6 +144,7 @@ def health_check() -> dict[str, str]:
 def _register_routers() -> None:
     from src.chitrika.routes.chat_routes import router as chat_router
     from src.chitrika.routes.character_routes import router as character_router
+    from src.chitrika.routes.desktop_routes import router as desktop_router
     from src.chitrika.routes.emotion_routes import router as emotion_router
     from src.chitrika.routes.heartbeat_routes import router as heartbeat_router
     from src.chitrika.routes.memory_routes import router as memory_router
@@ -151,6 +152,7 @@ def _register_routers() -> None:
 
     app.include_router(chat_router, prefix="/api")
     app.include_router(character_router, prefix="/api")
+    app.include_router(desktop_router, prefix="/api")
     app.include_router(emotion_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")
     app.include_router(heartbeat_router, prefix="/api")

@@ -1,0 +1,17 @@
+/** Type declarations for the Electron preload desktop API. */
+
+export interface DesktopAPI {
+  getApiBase(): string;
+  onNotificationClick(callback: (conversationId: string) => void): void;
+  onWindowFocus(callback: () => void): void;
+  setNotificationsEnabled(enabled: boolean): void;
+  showWindow(): void;
+}
+
+declare global {
+  interface Window {
+    desktopAPI?: DesktopAPI;
+  }
+}
+
+export {};

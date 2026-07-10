@@ -29,8 +29,13 @@ router = APIRouter(tags=["chat"])
 # Dependency: resolve LLM provider from character's configured provider
 # ---------------------------------------------------------------------------
 
-def _get_llm(session: Session, provider_name: str):
-    """Create an LLM client for the given provider name.
+def _get_llm(
+    session: Session,
+    *,
+    provider_id: str | None = None,
+    provider_name: str | None = None,
+):
+    """Create an LLM client for a provider id or fallback provider name.
 
     Returns (client, model_name) tuple, or (None, "") if no provider is found.
     """
@@ -39,9 +44,13 @@ def _get_llm(session: Session, provider_name: str):
         create_llm_client,
     )
 
-    provider = resolve_provider_for_character(session, provider_name)
+    provider = resolve_provider_for_character(
+        session,
+        provider_name=provider_name,
+        provider_id=provider_id,
+    )
     if provider is None:
-        logger.warning("No provider found for '%s'", provider_name)
+        logger.warning("No provider found for character")
         return None, ""
 
     client = create_llm_client(provider.api_key, provider.base_url)
@@ -139,6 +148,24 @@ def delete_conversation(
 
 
 # ---------------------------------------------------------------------------
+# Mark conversation read — POST /api/conversations/{conversation_id}/read
+# ---------------------------------------------------------------------------
+
+
+@router.post("/conversations/{conversation_id}/read")
+def mark_conversation_read(
+    conversation_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Mark all unread assistant messages in a conversation as read."""
+    from src.chitrika.engines.chat_engine import ChatEngine
+
+    engine = ChatEngine(session)
+    count = engine.mark_conversation_read(conversation_id)
+    return {"marked_read": count}
+
+
+# ---------------------------------------------------------------------------
 # Get messages — GET /api/conversations/{conversation_id}/messages
 # ---------------------------------------------------------------------------
 
@@ -160,7 +187,7 @@ def get_messages(
         messages=[
             MessageResponse(
                 id=m.id,
-                role=m.role,
+                role=m.role.value if hasattr(m.role, "value") else m.role,
                 content=m.content,
                 time=_relative_time(m.created_at),
                 created_at=m.created_at,
@@ -223,7 +250,11 @@ def send_message(
         raise HTTPException(status_code=404, detail="Character not found")
 
     # Create LLM client from character's provider
-    llm, model_name = _get_llm(session, character.provider or "deepseek")
+    llm, model_name = _get_llm(
+        session,
+        provider_id=character.provider_id,
+        provider_name=character.provider.name if character.provider else "deepseek",
+    )
 
     # Re-create engine with provider for streaming
     engine = ChatEngine(session, llm_provider=llm, model_name=model_name)
@@ -258,7 +289,7 @@ def edit_message(
         msg = engine.edit_message(message_id, body.content)
         return MessageResponse(
             id=msg.id,
-            role=msg.role,
+            role=msg.role.value if hasattr(msg.role, "value") else msg.role,
             content=msg.content,
             time=_relative_time(msg.created_at),
             created_at=msg.created_at,
@@ -287,13 +318,15 @@ def recall_message(
         msg = engine.recall_message(message_id)
         return MessageResponse(
             id=msg.id,
-            role=msg.role,
+            role=msg.role.value if hasattr(msg.role, "value") else msg.role,
             content=msg.content,
             time=_relative_time(msg.created_at),
             created_at=msg.created_at,
             edited_at=msg.edited_at,
             is_deleted=msg.is_deleted,
         )
+    except PermissionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -19,6 +19,7 @@ import src.chitrika.models.emotion  # noqa: F401, E402
 import src.chitrika.models.heartbeat  # noqa: F401, E402
 import src.chitrika.models.memory  # noqa: F401, E402
 import src.chitrika.models.message  # noqa: F401, E402
+import src.chitrika.models.provider  # noqa: F401, E402
 import src.chitrika.models.settings  # noqa: F401, E402
 
 

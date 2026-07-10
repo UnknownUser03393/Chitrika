@@ -11,19 +11,27 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session, select
 
 from src.chitrika.config import config
-from src.chitrika.database import _engine
+from src.chitrika.database import session_scope
 from src.chitrika.engines.emotion_engine import EmotionEngine
 from src.chitrika.engines.memory_engine import MemoryEngine
 from src.chitrika.models.character import Character
 from src.chitrika.models.conversation import Conversation
 from src.chitrika.models.emotion import EmotionState
 from src.chitrika.models.heartbeat import HeartbeatTask, ScheduledMessage
+from src.chitrika.models.base import (
+    HeartbeatTaskType,
+    ProactiveTrigger,
+    ScheduledMessageStatus,
+    TaskStatus,
+)
 from src.chitrika.models.message import Message
 from src.chitrika.utils.datetime_helpers import hours_between, utcnow
 
@@ -44,8 +52,12 @@ class HeartbeatEngine:
     TICK_INTERVAL_MINUTES: int = 5
     LONELINESS_THRESHOLD: float = 0.6
 
-    def __init__(self):
+    def __init__(
+        self,
+        session_factory: Callable[[], AbstractContextManager[Session]] | None = None,
+    ):
         self._scheduler = BackgroundScheduler()
+        self._session_factory = session_factory or session_scope
         self._running = False
         self._tick_count = 0
         self._last_tick: datetime | None = None
@@ -109,7 +121,7 @@ class HeartbeatEngine:
         self._last_tick = utcnow()
         logger.debug("Heartbeat tick #%d", self._tick_count)
 
-        with Session(_engine) as session:
+        with self._session_factory() as session:
             try:
                 characters = session.exec(
                     select(Character).where(Character.enabled.is_(True))
@@ -122,6 +134,9 @@ class HeartbeatEngine:
                         logger.exception(
                             "Heartbeat failed for character %s", character.id
                         )
+
+                # Deliver due scheduled messages (independent of per-character loop)
+                self._deliver_due_messages(session)
 
                 session.commit()
             except Exception:
@@ -181,7 +196,7 @@ class HeartbeatEngine:
         pending = session.exec(
             select(ScheduledMessage).where(
                 ScheduledMessage.character_id == character.id,
-                ScheduledMessage.status == "pending",
+                ScheduledMessage.status == ScheduledMessageStatus.PENDING.value,
             )
         ).first()
 
@@ -253,8 +268,8 @@ class HeartbeatEngine:
             character_id=character.id,
             conversation_id=conv.id,
             content=decision.get("message_content"),
-            status="pending",
-            trigger_reason="loneliness",
+            status=ScheduledMessageStatus.PENDING.value,
+            trigger_reason=ProactiveTrigger.LONELINESS.value,
             scheduled_at=(
                 utcnow()
                 + timedelta(minutes=decision.get("wait_minutes", 0))
@@ -276,6 +291,52 @@ class HeartbeatEngine:
             },
         )
 
+    def _deliver_due_messages(self, session: Session) -> None:
+        """Convert due ScheduledMessage rows into actual assistant Message rows.
+
+        Checks all PENDING scheduled messages whose scheduled_at is now or
+        in the past, creates a corresponding Message in the conversation,
+        and marks the scheduled message as SENT.
+        """
+        now = utcnow()
+        due = session.exec(
+            select(ScheduledMessage).where(
+                ScheduledMessage.status == ScheduledMessageStatus.PENDING.value,
+                ScheduledMessage.scheduled_at <= now,
+            )
+        ).all()
+
+        for scheduled in due:
+            if not scheduled.content:
+                scheduled.status = ScheduledMessageStatus.CANCELLED.value
+                scheduled.cancelled_at = now
+                continue
+
+            message = Message(
+                conversation_id=scheduled.conversation_id,
+                role="assistant",
+                content=scheduled.content,
+                scheduled_message_id=scheduled.id,
+            )
+            session.add(message)
+
+            # Update conversation timestamps
+            conv = session.exec(
+                select(Conversation).where(
+                    Conversation.id == scheduled.conversation_id,
+                )
+            ).first()
+            if conv is not None:
+                conv.last_message_at = message.created_at
+                conv.updated_at = now
+
+            scheduled.status = ScheduledMessageStatus.SENT.value
+            logger.info(
+                "Delivered proactive message %s → conversation %s",
+                scheduled.id,
+                scheduled.conversation_id,
+            )
+
     def _ask_llm_for_decision(
         self,
         session: Session,
@@ -292,7 +353,11 @@ class HeartbeatEngine:
             create_llm_client,
         )
 
-        provider = resolve_provider_for_character(session, character.provider)
+        provider = resolve_provider_for_character(
+            session,
+            provider_id=character.provider_id,
+            provider_name=character.provider.name if character.provider else None,
+        )
         if provider is None or not provider.api_key:
             return None
 
@@ -339,15 +404,15 @@ class HeartbeatEngine:
         self,
         session: Session,
         character_id: str,
-        task_type: str,
-        status: str,
+        task_type: str | HeartbeatTaskType,
+        status: str | TaskStatus,
         result: dict | None = None,
     ) -> None:
         """Record a heartbeat task execution in the audit log."""
         task = HeartbeatTask(
             character_id=character_id,
-            task_type=task_type,
-            status=status,
+            task_type=HeartbeatTaskType(task_type).value,
+            status=TaskStatus(status).value,
             scheduled_at=utcnow(),
             executed_at=utcnow(),
             result_json=json.dumps(result, ensure_ascii=False) if result else None,

@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from src.chitrika.database import get_session
 from src.chitrika.engines.memory_engine import MemoryEngine
+from src.chitrika.models.memory import Memory
 from src.chitrika.schemas.memory_schemas import (
     MemoryCreate,
     MemoryListResponse,
@@ -110,7 +111,7 @@ def update_memory(
     body: MemoryUpdate,
     session: Session = Depends(get_session),
 ) -> Memory:
-    """Update a memory — pin, change importance, edit content, or forget."""
+    """Update a memory: pin, change importance, edit content, or forget."""
     engine = MemoryEngine(session)
     updated = engine.update(
         memory_id,
@@ -133,7 +134,11 @@ def delete_memory(
     memory_id: str,
     session: Session = Depends(get_session),
 ) -> None:
-    """Permanently delete a memory."""
+    """Permanently delete a memory.
+
+    Soft-forgetting is handled through PATCH /api/memories/{id} with
+    {"is_forgotten": true}; this endpoint is intentionally destructive.
+    """
     engine = MemoryEngine(session)
     memory = engine.get_by_id(memory_id)
     if memory is None:

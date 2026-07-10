@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Generator
 from datetime import datetime
 
+from sqlalchemy import and_, func
 from sqlmodel import Session, col, select
 
 from src.chitrika.engines.emotion_engine import EmotionEngine
@@ -92,21 +93,64 @@ class ChatEngine:
             stmt = stmt.where(Conversation.character_id == character_id)
 
         conversations = list(self._session.exec(stmt).all())
+        if not conversations:
+            return []
+
+        conversation_ids = [conv.id for conv in conversations]
+        character_ids = {conv.character_id for conv in conversations}
+
+        characters = self._session.exec(
+            select(Character).where(Character.id.in_(character_ids))
+        ).all()
+        characters_by_id = {char.id: char for char in characters}
+
+        last_message_at = (
+            select(
+                Message.conversation_id,
+                func.max(Message.created_at).label("created_at"),
+            )
+            .where(
+                Message.conversation_id.in_(conversation_ids),
+                Message.is_deleted.is_(False),
+            )
+            .group_by(Message.conversation_id)
+            .subquery()
+        )
+        latest_messages = self._session.exec(
+            select(Message).join(
+                last_message_at,
+                and_(
+                    Message.conversation_id == last_message_at.c.conversation_id,
+                    Message.created_at == last_message_at.c.created_at,
+                ),
+            )
+        ).all()
+        messages_by_conversation_id = {
+            msg.conversation_id: msg for msg in latest_messages
+        }
+
+        # Count unread assistant messages per conversation
+        unread_stmt = (
+            select(
+                Message.conversation_id,
+                func.count(Message.id).label("unread"),
+            )
+            .where(
+                Message.conversation_id.in_(conversation_ids),
+                Message.role == "assistant",
+                Message.is_deleted.is_(False),
+                Message.read_at.is_(None),
+            )
+            .group_by(Message.conversation_id)
+        )
+        unread_rows = self._session.exec(unread_stmt).all()
+        unread_by_conv: dict[str, int] = {row[0]: row[1] for row in unread_rows}
+
         result: list[dict] = []
 
         for conv in conversations:
-            char = self._session.exec(
-                select(Character).where(Character.id == conv.character_id)
-            ).first()
-
-            last_msg = self._session.exec(
-                select(Message)
-                .where(
-                    Message.conversation_id == conv.id,
-                    Message.is_deleted.is_(False),
-                )
-                .order_by(col(Message.created_at).desc())
-            ).first()
+            char = characters_by_id.get(conv.character_id)
+            last_msg = messages_by_conversation_id.get(conv.id)
 
             result.append({
                 "id": conv.id,
@@ -115,7 +159,7 @@ class ChatEngine:
                 "color": char.color if char else "#4FA3E3",
                 "lastMessage": last_msg.content[:100] if last_msg else "",
                 "time": _relative_time(last_msg.created_at) if last_msg else "",
-                "unread": 0,  # TODO: track read status
+                "unread": unread_by_conv.get(conv.id, 0),
                 "pinned": False,
                 "character_id": conv.character_id,
             })
@@ -156,6 +200,78 @@ class ChatEngine:
         conv.last_message_at = None
         conv.updated_at = utcnow()
         self._session.commit()
+
+    def mark_conversation_read(self, conversation_id: str) -> int:
+        """Mark all unread assistant messages in a conversation as read.
+
+        Returns the number of messages that were marked read.
+        """
+        now = utcnow()
+        unread = self._session.exec(
+            select(Message).where(
+                Message.conversation_id == conversation_id,
+                Message.role == "assistant",
+                Message.is_deleted.is_(False),
+                Message.read_at.is_(None),
+            )
+        ).all()
+
+        for msg in unread:
+            msg.read_at = now
+
+        if unread:
+            self._session.commit()
+
+        return len(unread)
+
+    def get_pending_desktop_notifications(
+        self, character_id: str | None = None
+    ) -> list[dict]:
+        """Return assistant messages that haven't had a desktop notification yet.
+
+        These are messages where desktop_notified_at is NULL, role is
+        assistant, and is_deleted is False. Optionally filtered by character.
+        """
+        stmt = select(Message).where(
+            Message.role == "assistant",
+            Message.is_deleted.is_(False),
+            Message.desktop_notified_at.is_(None),
+        )
+
+        if character_id is not None:
+            stmt = stmt.join(Conversation).where(
+                Conversation.character_id == character_id,
+            )
+
+        messages = self._session.exec(stmt.order_by(Message.created_at.desc())).all()
+
+        result: list[dict] = []
+        for msg in messages:
+            conv = self.get_conversation(msg.conversation_id)
+            result.append({
+                "message_id": msg.id,
+                "conversation_id": msg.conversation_id,
+                "character_id": conv.character_id if conv else None,
+                "content_preview": msg.content[:120],
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            })
+
+        return result
+
+    def acknowledge_desktop_notification(self, message_id: str) -> bool:
+        """Mark a message as having had its desktop notification shown.
+
+        Returns True if the message was found and updated.
+        """
+        msg = self._session.exec(
+            select(Message).where(Message.id == message_id)
+        ).first()
+        if msg is None:
+            return False
+
+        msg.desktop_notified_at = utcnow()
+        self._session.commit()
+        return True
 
     # ------------------------------------------------------------------
     # Messages
@@ -212,6 +328,8 @@ class ChatEngine:
             raise ValueError(f"Message '{message_id}' not found")
         if msg.is_deleted:
             raise ValueError(f"Message '{message_id}' is deleted")
+        if msg.role != "user":
+            raise PermissionError("Only user messages can be recalled")
 
         if not msg.content.startswith("(recalled) "):
             escaped = msg.content.replace('"', r'\"')
@@ -275,7 +393,7 @@ class ChatEngine:
             select(Character).where(Character.id == conv.character_id)
         ).first()
         if character is None:
-            yield sse.sse_error(f"Character not found for conversation")
+            yield sse.sse_error("Character not found for conversation")
             return
 
         # 3. Save user message
@@ -310,7 +428,10 @@ class ChatEngine:
             yield sse.sse_error("Failed to build prompt context")
             return
 
-        # 6. Stream from LLM
+        # 6. Stream from LLM — one response = one message bubble.
+        # Newlines inside the response are preserved as line breaks
+        # within the bubble (via CSS whitespace-pre-wrap), not split
+        # into separate messages.
         assistant_msg_id = str(uuid.uuid4())
         full_response: list[str] = []
         error_occurred = False
@@ -318,21 +439,12 @@ class ChatEngine:
         try:
             yield sse.sse_start(assistant_msg_id)
 
-            # Create temporary assistant message placeholder
-            assistant_msg = Message(
-                id=assistant_msg_id,
-                conversation_id=conversation_id,
-                role="assistant",
-                content="",  # fill as we stream
-            )
-
             if self._llm is None:
                 # --- No LLM provider: return echo for testing ---
                 echo = f"[echo] {user_content}"
                 full_response.append(echo)
                 yield sse.sse_content(echo)
             else:
-                model = self._llm.__class__.__module__  # use first available model
                 try:
                     from src.llmproviders.LLMProvider import Model as LLMModel
 
@@ -345,22 +457,34 @@ class ChatEngine:
                     logger.exception("LLM streaming failed")
                     error_occurred = True
                     yield sse.sse_error(str(exc))
+                    return
 
             # 7. Save assistant message
-            assistant_msg.content = "".join(full_response)
+            content = "".join(full_response)
             if not error_occurred:
+                assistant_msg = Message(
+                    id=assistant_msg_id,
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=content,
+                )
                 self._session.add(assistant_msg)
                 conv.last_message_at = utcnow()
                 conv.updated_at = utcnow()
                 self._session.commit()
 
-            usage = {}
-            yield sse.sse_done(assistant_msg_id, usage)
+            yield sse.sse_done(assistant_msg_id, {})
 
         except GeneratorExit:
             # Client disconnected — save whatever we have so far
-            assistant_msg.content = "".join(full_response)
-            if assistant_msg.content:
+            partial = "".join(full_response).strip()
+            if partial:
+                assistant_msg = Message(
+                    id=assistant_msg_id,
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=partial,
+                )
                 self._session.add(assistant_msg)
                 conv.last_message_at = utcnow()
                 conv.updated_at = utcnow()
@@ -391,45 +515,86 @@ class ChatEngine:
     ) -> None:
         """Apply emotion deltas based on the interaction content.
 
-        Simple keyword-based heuristics for MVP.
+        Keyword and shape-based heuristics for MVP.
         Future: use a lightweight classifier or LLM call.
         """
         deltas: dict[str, float] = {}
+        text = user_text.lower()
 
-        # Positive keywords
-        positive = ["谢谢", "爱你", "喜欢", "哈哈", "hhh", "好", "棒", "厉害",
-                     "thank", "love", "good", "great", "nice"]
-        for word in positive:
-            if word.lower() in user_text.lower():
-                deltas["joy"] = deltas.get("joy", 0.0) + 0.05
-                deltas["trust"] = deltas.get("trust", 0.0) + 0.03
+        def add(dim: str, amount: float) -> None:
+            deltas[dim] = deltas.get(dim, 0.0) + amount
 
-        # Negative keywords
-        negative = ["讨厌", "滚", "傻逼", "烦", "生气", "bad", "hate", "stupid"]
-        for word in negative:
-            if word.lower() in user_text.lower():
-                deltas["anger"] = deltas.get("anger", 0.0) + 0.1
-                deltas["trust"] = deltas.get("trust", 0.0) - 0.05
+        def hit(words: list[str]) -> bool:
+            return any(word.lower() in text for word in words)
 
-        # Sadness keywords
-        sad = ["难过", "伤心", "哭", "sad", "cry", "lonely", "孤独"]
-        for word in sad:
-            if word.lower() in user_text.lower():
-                deltas["sadness"] = deltas.get("sadness", 0.0) + 0.08
+        if hit(["谢谢", "感谢", "辛苦", "thank", "thanks"]):
+            add("joy", 0.04)
+            add("trust", 0.06)
 
-        # Surprise keywords
-        surprise_words = ["我靠", "我艹", "天哪", "wow", "omg", "卧槽"]
-        for word in surprise_words:
-            if word.lower() in user_text.lower():
-                deltas["surprise"] = deltas.get("surprise", 0.0) + 0.1
+        if hit(["爱你", "喜欢你", "想你", "抱抱", "亲亲", "love you", "miss you"]):
+            add("joy", 0.08)
+            add("trust", 0.08)
+            add("anticipation", 0.03)
 
-        # Long user message → anticipation (user is engaged)
+        if hit(["哈哈", "hhh", "笑死", "开心", "高兴", "好棒", "厉害", "great", "nice"]):
+            add("joy", 0.06)
+            add("surprise", 0.02)
+
+        if hit(["对不起", "抱歉", "不好意思", "sorry"]):
+            add("sadness", 0.03)
+            add("trust", 0.04)
+            add("anger", -0.03)
+
+        if hit(["讨厌", "烦", "傻逼", "热", "生气", "闭嘴", "bad", "hate", "stupid"]):
+            add("anger", 0.10)
+            add("trust", -0.06)
+            add("disgust", 0.04)
+
+        if hit(["恶心", "反胃", "嫌弃", "离谱", "disgusting", "gross"]):
+            add("disgust", 0.10)
+            add("trust", -0.03)
+
+        if hit(["难过", "伤心", "委屈", "哭", "累了", "崩溃", "sad", "cry"]):
+            add("sadness", 0.09)
+            add("trust", 0.02)
+
+        if hit(["孤独", "寂寞", "没人理", "lonely", "alone"]):
+            add("sadness", 0.08)
+            add("anticipation", 0.05)
+            add("trust", -0.03)
+
+        if hit(["担心", "害怕", "怕", "紧张", "焦虑", "不安", "anxious", "afraid"]):
+            add("fear", 0.08)
+            add("anticipation", 0.04)
+
+        if hit(["期待", "等你", "想知道", "下次", "以后", "期待你", "hope"]):
+            add("anticipation", 0.07)
+            add("trust", 0.02)
+
+        if hit(["我靠", "我去", "天哪", "居然", "竟然", "wow", "omg", "卧槽"]):
+            add("surprise", 0.10)
+
+        if "？" in user_text or "?" in user_text:
+            add("anticipation", 0.02)
+        if "！" in user_text or "!" in user_text:
+            add("surprise", 0.02)
+
+        # Long user message means the user is engaged.
         if len(user_text) > 100:
-            deltas["joy"] = deltas.get("joy", 0.0) + 0.03
-            deltas["anticipation"] = deltas.get("anticipation", 0.0) + 0.05
-        # Very short user message (e.g. "嗯") → slight dip
+            add("joy", 0.03)
+            add("anticipation", 0.05)
+            add("trust", 0.02)
+        # Very short user message gets a slight engagement dip.
         elif len(user_text) < 5:
-            deltas["anticipation"] = deltas.get("anticipation", 0.0) - 0.02
+            add("anticipation", -0.02)
+
+        if assistant_text:
+            assistant_lower = assistant_text.lower()
+            if any(word in assistant_lower for word in ["对不起", "抱歉", "sorry"]):
+                add("sadness", 0.02)
+                add("trust", 0.02)
+            if any(word in assistant_lower for word in ["开心", "喜欢", "谢谢", "happy"]):
+                add("joy", 0.02)
 
         if deltas:
             self._emotion.update_emotion(character_id, deltas)
@@ -450,10 +615,14 @@ class ChatEngine:
         # Store user message as short-term memory
         if len(user_text) > 5:
             emotional_valence = 0.0
-            positive_indicators = ["喜欢", "爱", "好", "开心", "棒", "厉害",
-                                   "love", "good", "great", "happy"]
-            negative_indicators = ["讨厌", "烦", "难过", "伤心", "生气",
-                                   "hate", "bad", "sad", "angry"]
+            positive_indicators = [
+                "喜欢", "爱", "好", "开心", "棒", "厉害",
+                "love", "good", "great", "happy",
+            ]
+            negative_indicators = [
+                "讨厌", "烦", "难过", "伤心", "生气",
+                "hate", "bad", "sad", "angry",
+            ]
 
             for word in positive_indicators:
                 if word in user_text:

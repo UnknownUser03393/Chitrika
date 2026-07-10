@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
+from contextlib import contextmanager
 
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -26,13 +27,46 @@ def _enable_wal() -> None:
         conn.commit()
 
 
-def get_session() -> Generator[Session, None, None]:
-    """Yield a synchronous SQLModel session.
-
-    Used by APScheduler (background threads) and anywhere async is not needed.
-    """
+@contextmanager
+def session_scope() -> Generator[Session, None, None]:
+    """Provide a synchronous SQLModel session as a context manager."""
     with Session(_engine) as session:
         yield session
+
+
+def get_session() -> Generator[Session, None, None]:
+    """Yield a synchronous SQLModel session for FastAPI dependencies."""
+    with session_scope() as session:
+        yield session
+
+
+def _migrate_columns() -> None:
+    """Add missing columns to existing tables without recreating them.
+
+    SQLModel.metadata.create_all() doesn't alter existing tables, so new
+    columns added to models after the initial DB creation need explicit
+    ALTER TABLE statements.
+    """
+    from sqlalchemy import text
+
+    migrations: list[tuple[str, str, str]] = [
+        # (table, column, definition)
+        ("messages", "read_at", "DATETIME"),
+        ("messages", "desktop_notified_at", "DATETIME"),
+        ("messages", "scheduled_message_id", "TEXT"),
+    ]
+
+    with _engine.connect() as conn:
+        for table, column, col_type in migrations:
+            result = conn.execute(
+                text(f"PRAGMA table_info('{table}')"),
+            )
+            existing = {row[1] for row in result}
+            if column not in existing:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"),
+                )
+                conn.commit()
 
 
 def create_db_and_tables() -> None:
@@ -48,4 +82,5 @@ def create_db_and_tables() -> None:
     import src.chitrika.models.settings  # noqa: F401
 
     SQLModel.metadata.create_all(_engine)
+    _migrate_columns()
     _enable_wal()
