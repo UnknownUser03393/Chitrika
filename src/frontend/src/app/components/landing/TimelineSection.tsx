@@ -2,23 +2,25 @@ import { motion } from "motion/react";
 import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
 import { useScrollReveal } from "./useScrollReveal";
+import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
-export function TimelineSection() {
+interface Props {
+  active?: boolean;
+}
+
+export function TimelineSection({ active }: Props = {}) {
   const { lang } = useLang();
   const t = translations.timeline;
   const events = t.events;
-
-  const prefersReduced = typeof window !== "undefined"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const { ref, isVisible } = useScrollReveal({ skip: prefersReduced });
+  const reduce = usePrefersReducedMotion();
+  const { ref, isVisible } = useScrollReveal({ skip: reduce, active });
 
   return (
     <section
       ref={ref}
-      className="relative py-24 md:py-32 px-6"
+      className="relative py-16 md:py-24 px-6 min-h-full"
       style={{ background: "var(--app-panel)" }}
     >
-      {/* Section header */}
       <div className="text-center mb-16 md:mb-20">
         <h2
           className="text-3xl md:text-4xl font-bold tracking-tight"
@@ -31,11 +33,11 @@ export function TimelineSection() {
         </p>
       </div>
 
-      {/* Timeline */}
       <div className="relative max-w-2xl mx-auto">
         <div
           className="absolute left-4 md:left-1/2 md:-translate-x-px top-0 bottom-0 w-px"
           style={{ background: "var(--app-border)" }}
+          aria-hidden="true"
         />
 
         <div className="flex flex-col gap-12">
@@ -61,13 +63,17 @@ export function TimelineSection() {
             return (
               <motion.div
                 key={i}
-                initial={{ opacity: 0, y: 40 }}
-                animate={isVisible ? { opacity: 1, y: 0 } : {}}
-                transition={{
-                  duration: 0.5,
-                  delay: 0.15 * i,
-                  ease: [0.25, 0.46, 0.45, 0.94],
-                }}
+                initial={reduce ? false : { opacity: 0, y: 40 }}
+                animate={reduce || isVisible ? { opacity: 1, y: 0 } : {}}
+                transition={
+                  reduce
+                    ? { duration: 0 }
+                    : {
+                        duration: 0.5,
+                        delay: 0.15 * i,
+                        ease: [0.25, 0.46, 0.45, 0.94],
+                      }
+                }
                 className={`relative pl-12 md:pl-0 md:w-1/2 ${
                   i % 2 === 0 ? "md:pr-12 md:text-right md:ml-0" : "md:pl-12 md:ml-auto"
                 }`}
@@ -82,6 +88,7 @@ export function TimelineSection() {
                     background: dotColor,
                     boxShadow: `0 0 0 4px ${ringColor}`,
                   }}
+                  aria-hidden="true"
                 />
 
                 <div

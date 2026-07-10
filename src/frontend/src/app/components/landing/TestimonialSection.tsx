@@ -3,17 +3,20 @@ import { Quote } from "lucide-react";
 import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
 import { useScrollReveal } from "./useScrollReveal";
+import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
-export function TestimonialSection() {
+interface Props {
+  active?: boolean;
+}
+
+export function TestimonialSection({ active }: Props = {}) {
   const { lang } = useLang();
   const t = translations.testimonials;
-
-  const prefersReduced = typeof window !== "undefined"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const { ref, isVisible } = useScrollReveal({ skip: prefersReduced });
+  const reduce = usePrefersReducedMotion();
+  const { ref, isVisible } = useScrollReveal({ skip: reduce, active });
 
   return (
-    <section ref={ref} className="relative py-24 md:py-32 px-6">
+    <section ref={ref} className="relative py-16 md:py-24 px-6 min-h-full">
       <div className="text-center mb-16">
         <h2
           className="text-3xl md:text-4xl font-bold tracking-tight"
@@ -23,17 +26,17 @@ export function TestimonialSection() {
         </h2>
       </div>
 
-      {/* Main quote */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={isVisible ? { opacity: 1, y: 0 } : {}}
-        transition={{ duration: 0.7, ease: [0.25, 0.46, 0.45, 0.94] }}
+        initial={reduce ? false : { opacity: 0, y: 30 }}
+        animate={reduce || isVisible ? { opacity: 1, y: 0 } : {}}
+        transition={reduce ? { duration: 0 } : { duration: 0.7, ease: [0.25, 0.46, 0.45, 0.94] }}
         className="max-w-2xl mx-auto mb-16 text-center"
       >
         <Quote
           size={40}
           className="mx-auto mb-6 opacity-30"
           style={{ color: "var(--app-accent)" }}
+          aria-hidden="true"
         />
         <blockquote
           className="text-xl md:text-2xl leading-relaxed font-medium"
@@ -51,18 +54,21 @@ export function TestimonialSection() {
         </div>
       </motion.div>
 
-      {/* Supporting quotes */}
       <div className="max-w-4xl mx-auto grid gap-6 md:grid-cols-3">
         {t.supporting.map((q, i) => (
           <motion.div
             key={i}
-            initial={{ opacity: 0, y: 30 }}
-            animate={isVisible ? { opacity: 1, y: 0 } : {}}
-            transition={{
-              duration: 0.5,
-              delay: 0.3 + 0.12 * i,
-              ease: [0.25, 0.46, 0.45, 0.94],
-            }}
+            initial={reduce ? false : { opacity: 0, y: 30 }}
+            animate={reduce || isVisible ? { opacity: 1, y: 0 } : {}}
+            transition={
+              reduce
+                ? { duration: 0 }
+                : {
+                    duration: 0.5,
+                    delay: 0.3 + 0.12 * i,
+                    ease: [0.25, 0.46, 0.45, 0.94],
+                  }
+            }
             className="p-5 rounded-xl border"
             style={{
               background: "color-mix(in srgb, var(--app-panel) 60%, transparent)",

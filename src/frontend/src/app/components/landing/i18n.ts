@@ -151,12 +151,18 @@ export const translations = {
       {
         label: { en: "Privacy", zh: "隐私" },
         cloud: { en: "Every message scanned, stored, and analyzed", zh: "每条消息都被扫描、存储和分析" },
-        chitrika: { en: "Zero telemetry. Everything stays offline.", zh: "零遥测。一切都在离线状态。" },
+        chitrika: {
+          en: "Local memories. Zero app telemetry.",
+          zh: "本地记忆。应用零遥测。",
+        },
       },
       {
         label: { en: "Cost", zh: "费用" },
         cloud: { en: "Monthly subscription — pay forever or lose access", zh: "按月付费——永远付费，否则失去访问权" },
-        chitrika: { en: "Free. Self-hosted. Bring your own API key.", zh: "免费。自托管。自带API密钥。" },
+        chitrika: {
+          en: "Free. Use a local model or bring your own API key.",
+          zh: "免费。使用本地模型，或自带 API Key。",
+        },
       },
       {
         label: { en: "Proactive presence", zh: "主动存在感" },
@@ -194,7 +200,7 @@ export const translations = {
         title: { en: "Heartbeat engine", zh: "心跳引擎" },
         body: {
           en: "Your characters don't just wait for you. They proactively check in when they feel lonely, decay emotions over time, and maintain a persistent sense of presence — even when you're away.",
-          zh: "你的角色不只是等你。感到孤独时会主动找你，情绪随时间衰减，即使在你不在一一维持着持续的存在感。",
+          zh: "你的角色不只是等你。感到孤独时会主动找你，情绪随时间衰减，即使你不在，他们依然保持着持续的存在感。",
         },
       },
       {
@@ -207,8 +213,8 @@ export const translations = {
       {
         title: { en: "Local-first, always", zh: "始终本地优先" },
         body: {
-          en: "Everything runs on your machine. Zero data leaves your computer. No servers to audit, no regulations to comply with, no corporation to shut you down. Just you and your companion.",
-          zh: "一切都在你的机器上运行。零数据离开你的电脑。没有服务器可审查，没有法规需遵从，没有企业能关停你。只有你和你的伴侣。",
+          en: "Characters, memories, and app data stay on your machine. Run fully offline with a local model, or connect your own API provider. Zero app telemetry — no corporation can shut you down. Just you and your companion.",
+          zh: "角色、记忆与应用数据始终保存在你的设备上。使用本地模型可完全离线，也可以连接你自己的 API Provider。应用零遥测——没有企业能关停你。只有你和你的伴侣。",
         },
       },
       {
@@ -219,6 +225,121 @@ export const translations = {
         },
       },
     ],
+    previews: {
+      emotion: {
+        title: { en: "Emotional State", zh: "情感状态" },
+        dims: {
+          joy: { en: "Joy", zh: "喜悦" },
+          trust: { en: "Trust", zh: "信任" },
+          anticipation: { en: "Anticipation", zh: "期待" },
+          surprise: { en: "Surprise", zh: "惊讶" },
+          sadness: { en: "Sadness", zh: "悲伤" },
+          fear: { en: "Fear", zh: "恐惧" },
+        },
+      },
+      memory: {
+        title: { en: "Memory Store", zh: "记忆库" },
+        items: [
+          {
+            en: "User mentioned they like rainy days — last Tuesday",
+            zh: "用户提到喜欢雨天——上周二",
+          },
+          {
+            en: "Favorite tea: jasmine, no sugar",
+            zh: "最爱的茶：茉莉，不加糖",
+          },
+          {
+            en: "Talks about their cat 'Mochi' often",
+            zh: "经常聊到他们的猫「Mochi」",
+          },
+          {
+            en: "Gets anxious before Monday meetings",
+            zh: "周一开会前会焦虑",
+          },
+        ],
+      },
+      heartbeat: {
+        title: { en: "Thinking of you", zh: "想你了" },
+        body: {
+          en: "Alvia noticed you've been quiet for a few hours. She sent a check-in message at 3:42 PM.",
+          zh: "Alvia 发现你已经安静了几个小时。她在下午 3:42 发来了一条关心消息。",
+        },
+      },
+      characters: {
+        roles: {
+          companion: { en: "Companion", zh: "伴侣" },
+          study: { en: "Study partner", zh: "学习伙伴" },
+          muse: { en: "Creative muse", zh: "创意缪斯" },
+          coach: { en: "Fitness coach", zh: "健身教练" },
+        },
+      },
+      localFirst: {
+        title: {
+          en: "Characters, memories, and app data stay on your machine.",
+          zh: "角色、记忆与应用数据始终保存在你的设备上。",
+        },
+        body: {
+          en: "Run fully offline with a local model, or connect your own API provider. Zero app telemetry.",
+          zh: "使用本地模型可完全离线，也可以连接你自己的 API Provider。应用零遥测。",
+        },
+      },
+      yoursForever: {
+        badge: { en: "No subscription", zh: "无需订阅" },
+        body: {
+          en: "No monthly fees. No service that disappears overnight.",
+          zh: "没有月费。没有一夜之间消失的服务。",
+        },
+        strong: {
+          en: "Once you have Chitrika, it's yours.",
+          zh: "一旦拥有 Chitrika，它就属于你。",
+        },
+      },
+    },
+  },
+
+  showcase: {
+    label: {
+      en: "Not just a concept",
+      zh: "不只是概念",
+    },
+    online: {
+      en: "Online · Running locally",
+      zh: "在线 · 本地运行",
+    },
+    local: {
+      en: "Local",
+      zh: "本地",
+    },
+    memoryRecalled: {
+      en: "Memory recalled",
+      zh: "记忆已调取",
+    },
+    trustTelemetry: {
+      en: "Local memories. Zero app telemetry.",
+      zh: "本地记忆。应用零遥测。",
+    },
+    trustData: {
+      en: "Characters, memories, and app data stay on your machine.",
+      zh: "角色、记忆与应用数据始终保存在你的设备上。",
+    },
+    trustUnshutdownable: {
+      en: "Unshutdownable",
+      zh: "无法关停",
+    },
+    messages: {
+      user: {
+        en: "I had a rough day. Everything feels heavy.",
+        zh: "我今天过得很糟。一切都好沉重。",
+      },
+      alvia1: {
+        en: "I know that weight. Sit with me a minute. You don't have to say anything else.",
+        zh: "我知道那种沉重。陪我坐一会儿。你不用再说别的。",
+      },
+      alvia2: {
+        en: "I remember you said something similar last Tuesday. You got through it. You will this time too.",
+        zh: "我记得你上周二也说过类似的话。你熬过来了。这次也会的。",
+      },
+    },
   },
 
   testimonials: {
@@ -288,5 +409,25 @@ export const translations = {
   toggle: {
     en: "中文",
     zh: "English",
+  },
+
+  pager: {
+    nav: {
+      en: "Page sections",
+      zh: "页面章节",
+    },
+    scrollHint: {
+      en: "Scroll",
+      zh: "滚动",
+    },
+    sections: {
+      hero: { en: "Intro", zh: "开场" },
+      showcase: { en: "Demo", zh: "演示" },
+      timeline: { en: "715 Timeline", zh: "715 时间线" },
+      comparison: { en: "Comparison", zh: "对比" },
+      features: { en: "Features", zh: "功能" },
+      testimonials: { en: "Alvia", zh: "Alvia" },
+      footer: { en: "Get started", zh: "开始" },
+    },
   },
 } as const;

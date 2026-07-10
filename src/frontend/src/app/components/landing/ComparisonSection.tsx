@@ -3,19 +3,22 @@ import { Check, X, Server, Shield, Users, Eye, CreditCard, Bell, Database } from
 import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
 import { useScrollReveal } from "./useScrollReveal";
+import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
 const ICONS = [Database, Shield, Server, Users, Eye, CreditCard, Bell];
 
-export function ComparisonSection() {
+interface Props {
+  active?: boolean;
+}
+
+export function ComparisonSection({ active }: Props = {}) {
   const { lang } = useLang();
   const t = translations.comparison;
-
-  const prefersReduced = typeof window !== "undefined"
-    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const { ref, isVisible } = useScrollReveal({ skip: prefersReduced });
+  const reduce = usePrefersReducedMotion();
+  const { ref, isVisible } = useScrollReveal({ skip: reduce, active });
 
   return (
-    <section ref={ref} className="relative py-24 md:py-32 px-6">
+    <section ref={ref} className="relative py-16 md:py-24 px-6 min-h-full">
       <div className="text-center mb-16">
         <h2
           className="text-3xl md:text-4xl font-bold tracking-tight"
@@ -28,7 +31,6 @@ export function ComparisonSection() {
         </p>
       </div>
 
-      {/* Column headers — visible md+ only */}
       <div className="max-w-4xl mx-auto mb-6 hidden md:grid grid-cols-[1fr_1fr_1fr] gap-4">
         <div />
         <div
@@ -38,7 +40,7 @@ export function ComparisonSection() {
             color: "var(--app-danger)",
           }}
         >
-          <X size={16} />
+          <X size={16} aria-hidden="true" />
           {t.cloudHeader[lang]}
         </div>
         <div
@@ -48,35 +50,37 @@ export function ComparisonSection() {
             color: "var(--success)",
           }}
         >
-          <Check size={16} />
+          <Check size={16} aria-hidden="true" />
           {t.chitrikaHeader[lang]}
         </div>
       </div>
 
-      {/* Rows */}
       <div className="max-w-4xl mx-auto flex flex-col gap-3">
         {t.rows.map((row, i) => {
           const Icon = ICONS[i] || Database;
           return (
             <motion.div
               key={i}
-              initial={{ opacity: 0, y: 20 }}
-              animate={isVisible ? { opacity: 1, y: 0 } : {}}
-              transition={{
-                duration: 0.4,
-                delay: 0.08 * i,
-                ease: [0.25, 0.46, 0.45, 0.94],
-              }}
+              initial={reduce ? false : { opacity: 0, y: 20 }}
+              animate={reduce || isVisible ? { opacity: 1, y: 0 } : {}}
+              transition={
+                reduce
+                  ? { duration: 0 }
+                  : {
+                      duration: 0.4,
+                      delay: 0.08 * i,
+                      ease: [0.25, 0.46, 0.45, 0.94],
+                    }
+              }
               className="p-4 rounded-xl border"
               style={{
                 background: "color-mix(in srgb, var(--app-panel) 60%, transparent)",
                 borderColor: "var(--app-border)",
               }}
             >
-              {/* Desktop: 3-column grid */}
               <div className="hidden md:grid grid-cols-[1fr_1fr_1fr] gap-4 items-center">
                 <div className="flex items-center gap-3">
-                  <Icon size={16} style={{ color: "var(--app-accent)" }} />
+                  <Icon size={16} style={{ color: "var(--app-accent)" }} aria-hidden="true" />
                   <span
                     className="text-sm font-medium"
                     style={{ color: "var(--app-text)" }}
@@ -95,10 +99,9 @@ export function ComparisonSection() {
                 </div>
               </div>
 
-              {/* Mobile: stacked vertical card */}
               <div className="md:hidden flex flex-col gap-3">
                 <div className="flex items-center gap-2">
-                  <Icon size={16} style={{ color: "var(--app-accent)" }} />
+                  <Icon size={16} style={{ color: "var(--app-accent)" }} aria-hidden="true" />
                   <span
                     className="text-sm font-semibold"
                     style={{ color: "var(--app-text)" }}
@@ -113,7 +116,7 @@ export function ComparisonSection() {
                     color: "var(--app-muted)",
                   }}
                 >
-                  <X size={14} className="shrink-0 mt-0.5" style={{ color: "var(--app-danger)" }} />
+                  <X size={14} className="shrink-0 mt-0.5" style={{ color: "var(--app-danger)" }} aria-hidden="true" />
                   <span>{row.cloud[lang]}</span>
                 </div>
                 <div
@@ -123,7 +126,7 @@ export function ComparisonSection() {
                     color: "var(--app-text)",
                   }}
                 >
-                  <Check size={14} className="shrink-0 mt-0.5" style={{ color: "var(--success)" }} />
+                  <Check size={14} className="shrink-0 mt-0.5" style={{ color: "var(--success)" }} aria-hidden="true" />
                   <span>{row.chitrika[lang]}</span>
                 </div>
               </div>

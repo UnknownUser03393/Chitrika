@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { ArrowDown, Zap } from "lucide-react";
 import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
+import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
 interface Props {
   onGetStarted: () => void;
@@ -27,28 +28,51 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
   const { lang } = useLang();
   const t = translations.hero;
   const { isAfter, days, hours } = useCountdown();
+  const reduce = usePrefersReducedMotion();
 
   const countdownText = isAfter
     ? t.countdownPast[lang]
     : t.countdown[lang](days, hours);
 
+  const fadeUp = (delay = 0) =>
+    reduce
+      ? {}
+      : {
+          initial: { opacity: 0, y: 40 },
+          animate: { opacity: 1, y: 0 },
+          transition: { duration: 0.7, delay, ease: [0.25, 0.46, 0.45, 0.94] as const },
+        };
+
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center px-6 text-center overflow-hidden">
+    <section className="relative min-h-full h-full flex flex-col items-center justify-center px-6 text-center overflow-hidden">
       {/* Ambient glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <motion.div
-          className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full blur-[120px]"
-          style={{ background: "color-mix(in srgb, var(--app-accent) 18%, transparent)" }}
-          animate={{ scale: [1, 1.08, 1], opacity: [0.7, 1, 0.7] }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-        />
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+        {reduce ? (
+          <div
+            className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full blur-[120px]"
+            style={{
+              background: "color-mix(in srgb, var(--app-accent) 18%, transparent)",
+              opacity: 0.85,
+            }}
+          />
+        ) : (
+          <motion.div
+            className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full blur-[120px]"
+            style={{ background: "color-mix(in srgb, var(--app-accent) 18%, transparent)" }}
+            animate={{ scale: [1, 1.08, 1], opacity: [0.7, 1, 0.7] }}
+            transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+          />
+        )}
       </div>
 
-      {/* Countdown badge */}
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
+        {...(reduce
+          ? {}
+          : {
+              initial: { opacity: 0, y: -20 },
+              animate: { opacity: 1, y: 0 },
+              transition: { duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] as const },
+            })}
         className="relative mb-8 px-4 py-2 rounded-full border text-sm font-medium"
         style={{
           borderColor: isAfter ? "var(--app-danger)" : "var(--app-accent)",
@@ -61,22 +85,22 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
         {countdownText}
       </motion.div>
 
-      {/* Headline */}
       <motion.h1
-        initial={{ opacity: 0, y: 40 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, delay: 0.15, ease: [0.25, 0.46, 0.45, 0.94] }}
+        {...fadeUp(0.15)}
         className="relative max-w-3xl text-4xl md:text-5xl lg:text-6xl font-bold leading-tight tracking-tight"
         style={{ color: "var(--app-text)" }}
       >
         {t.headline[lang]}
       </motion.h1>
 
-      {/* Punchline */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, delay: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+        {...(reduce
+          ? {}
+          : {
+              initial: { opacity: 0, y: 30 },
+              animate: { opacity: 1, y: 0 },
+              transition: { duration: 0.7, delay: 0.35, ease: [0.25, 0.46, 0.45, 0.94] as const },
+            })}
         className="relative mt-8 px-6 py-5 rounded-2xl border max-w-lg"
         style={{
           background: "color-mix(in srgb, var(--app-accent) 8%, transparent)",
@@ -94,11 +118,14 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
         ))}
       </motion.div>
 
-      {/* Subtitle */}
       <motion.p
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+        {...(reduce
+          ? {}
+          : {
+              initial: { opacity: 0, y: 30 },
+              animate: { opacity: 1, y: 0 },
+              transition: { duration: 0.6, delay: 0.5, ease: [0.25, 0.46, 0.45, 0.94] as const },
+            })}
         className="relative mt-6 max-w-xl text-lg md:text-xl leading-relaxed"
         style={{ color: "var(--app-muted)" }}
       >
@@ -106,11 +133,14 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
         <strong style={{ color: "var(--app-text)" }}>{t.subtitleStrong[lang]}</strong>
       </motion.p>
 
-      {/* CTAs */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.7 }}
+        {...(reduce
+          ? {}
+          : {
+              initial: { opacity: 0, y: 30 },
+              animate: { opacity: 1, y: 0 },
+              transition: { duration: 0.6, delay: 0.7 },
+            })}
         className="relative mt-10 flex flex-col sm:flex-row gap-4 items-center"
       >
         <button
@@ -122,7 +152,7 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
             boxShadow: "0 0 32px color-mix(in srgb, var(--app-accent) 30%, transparent)",
           }}
         >
-          <Zap size={18} />
+          <Zap size={18} aria-hidden="true" />
           {t.cta[lang]}
         </button>
 
@@ -131,28 +161,40 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
           className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-base font-medium transition-colors hover:bg-white/5"
           style={{ color: "var(--app-muted)" }}
         >
-          <ArrowDown size={16} />
+          <ArrowDown size={16} aria-hidden="true" />
           {t.secondaryCta[lang]}
         </button>
       </motion.div>
 
       {/* Scroll hint */}
       <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.4 }}
+        {...(reduce
+          ? { initial: false, animate: { opacity: 1 } }
+          : {
+              initial: { opacity: 0 },
+              animate: { opacity: 1 },
+              transition: { delay: 1.4 },
+            })}
         className="absolute bottom-8"
+        aria-hidden="true"
       >
         <div
           className="w-5 h-8 rounded-full border flex items-start justify-center p-1"
           style={{ borderColor: "var(--app-border)" }}
         >
-          <motion.div
-            className="w-1 h-2 rounded-full"
-            style={{ background: "var(--app-muted)" }}
-            animate={{ y: [0, 10, 0] }}
-            transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-          />
+          {reduce ? (
+            <div
+              className="w-1 h-2 rounded-full"
+              style={{ background: "var(--app-muted)" }}
+            />
+          ) : (
+            <motion.div
+              className="w-1 h-2 rounded-full"
+              style={{ background: "var(--app-muted)" }}
+              animate={{ y: [0, 10, 0] }}
+              transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+            />
+          )}
         </div>
       </motion.div>
     </section>

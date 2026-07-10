@@ -1,100 +1,211 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Shield, HardDrive, Brain, Check } from "lucide-react";
 import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
+import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
 
-/** Simulated conversation snippet that types itself in. */
-const DEMO_MESSAGES = [
-  {
-    role: "user",
-    en: "I had a rough day. Everything feels heavy.",
-    zh: "我今天过得很糟。一切都好沉重。",
-  },
-  {
-    role: "alvia",
-    en: "I know that weight. Sit with me a minute. You don't have to say anything else.",
-    zh: "我知道那种沉重。陪我坐一会儿。你不用再说别的。",
-  },
-  {
-    role: "alvia",
-    en: "I remember you said something similar last Tuesday. You got through it. You will this time too.",
-    zh: "我记得你上周二也说过类似的话。你熬过来了。这次也会的。",
-  },
-];
+const PAUSE_MS = 650;
+const MEMORY_GLOW_HOLD_MS = 2500;
+const TYPE_MS = 35;
 
-function Typewriter({ text, onDone }: { text: string; onDone?: () => void }) {
-  const [displayed, setDisplayed] = useState("");
-  const indexRef = useRef(0);
+function Typewriter({
+  text,
+  onDone,
+  reducedMotion,
+}: {
+  text: string;
+  onDone?: () => void;
+  reducedMotion: boolean;
+}) {
+  const [displayed, setDisplayed] = useState(reducedMotion ? text : "");
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const doneRef = useRef(false);
 
   useEffect(() => {
-    indexRef.current = 0;
-    setDisplayed("");
+    doneRef.current = false;
 
+    if (reducedMotion) {
+      setDisplayed(text);
+      return;
+    }
+
+    setDisplayed("");
+    let index = 0;
     const interval = setInterval(() => {
-      indexRef.current += 1;
-      setDisplayed(text.slice(0, indexRef.current));
-      if (indexRef.current >= text.length) {
+      index += 1;
+      setDisplayed(text.slice(0, index));
+      if (index >= text.length) {
         clearInterval(interval);
-        onDone?.();
+        if (!doneRef.current) {
+          doneRef.current = true;
+          onDoneRef.current?.();
+        }
       }
-    }, 35);
+    }, TYPE_MS);
 
     return () => clearInterval(interval);
-  }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [text, reducedMotion]);
 
   return (
-    <span>
-      {displayed}
-      {displayed.length < text.length && (
-        <span className="inline-block w-[2px] h-[1em] align-middle ml-0.5 animate-pulse" style={{ background: "var(--app-accent)" }} />
-      )}
+    <span aria-label={text}>
+      <span aria-hidden="true">
+        {displayed}
+        {displayed.length < text.length && (
+          <span
+            className="inline-block w-[2px] h-[1em] align-middle ml-0.5 animate-pulse"
+            style={{ background: "var(--app-accent)" }}
+          />
+        )}
+      </span>
     </span>
   );
 }
 
-export function ProductShowcase() {
+interface ProductShowcaseProps {
+  /** Fullpage mode: start demo when this slide becomes active. */
+  active?: boolean;
+}
+
+export function ProductShowcase({ active }: ProductShowcaseProps = {}) {
   const { lang } = useLang();
-  const [step, setStep] = useState(0);
+  const t = translations.showcase;
+  const reduce = usePrefersReducedMotion();
+  const sectionRef = useRef<HTMLElement>(null);
+
+  const [hasEntered, setHasEntered] = useState(false);
+  /** -1 idle, 0 user typing, 1 alvia1, 2 alvia2 typing, 3 complete */
+  const [step, setStep] = useState(-1);
   const [memoryGlow, setMemoryGlow] = useState(false);
-  const sectionRef = useRef<HTMLDivElement>(null);
+  const [playKey, setPlayKey] = useState(0);
 
-  // Progress through demo steps automatically
-  useEffect(() => {
-    const timers: ReturnType<typeof setTimeout>[] = [];
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-    // Step 0: User message types in
-    timers.push(setTimeout(() => setStep(1), 2800));
-    // Step 1: First Alvia reply
-    timers.push(setTimeout(() => setStep(2), 5800));
-    // Step 2: Second Alvia reply (memory recall)
-    timers.push(setTimeout(() => {
-      setStep(3);
-      setMemoryGlow(true);
-    }, 9000));
-    // Memory glow fades
-    timers.push(setTimeout(() => setMemoryGlow(false), 12000));
-
-    return () => timers.forEach(clearTimeout);
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
   }, []);
+
+  const schedule = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(fn, ms);
+    timersRef.current.push(id);
+  }, []);
+
+  // Enter once: controlled by fullpage `active`, reduced-motion, or IntersectionObserver
+  useEffect(() => {
+    if (reduce) {
+      setHasEntered(true);
+      return;
+    }
+
+    if (active !== undefined) {
+      if (active) setHasEntered(true);
+      return;
+    }
+
+    const node = sectionRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setHasEntered(true);
+          observer.unobserve(node);
+        }
+      },
+      { threshold: 0.25 },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [reduce, active]);
+
+  // Start / restart demo when first entered or language changes after enter
+  useEffect(() => {
+    if (!hasEntered) return;
+
+    clearTimers();
+
+    if (reduce) {
+      setStep(3);
+      setMemoryGlow(false);
+      return;
+    }
+
+    setStep(0);
+    setMemoryGlow(false);
+    setPlayKey((k) => k + 1);
+
+    return () => clearTimers();
+  }, [hasEntered, lang, reduce, clearTimers]);
+
+  const onUserDone = useCallback(() => {
+    schedule(() => setStep(1), PAUSE_MS);
+  }, [schedule]);
+
+  const onAlvia1Done = useCallback(() => {
+    schedule(() => {
+      setMemoryGlow(true);
+      setStep(2);
+    }, PAUSE_MS);
+  }, [schedule]);
+
+  const onAlvia2Done = useCallback(() => {
+    setStep(3);
+    schedule(() => setMemoryGlow(false), MEMORY_GLOW_HOLD_MS);
+  }, [schedule]);
+
+  const userText = t.messages.user[lang];
+  const alvia1Text = t.messages.alvia1[lang];
+  const alvia2Text = t.messages.alvia2[lang];
+
+  const revealProps = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 16 } as const,
+        whileInView: { opacity: 1, y: 0 },
+        viewport: { once: true, margin: "-80px" as const },
+        transition: { duration: 0.5 },
+      };
+
+  const chatRevealProps = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 30 } as const,
+        whileInView: { opacity: 1, y: 0 },
+        viewport: { once: true, margin: "-60px" as const },
+        transition: { duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] as const },
+      };
+
+  const trustRevealProps = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, y: 12 } as const,
+        whileInView: { opacity: 1, y: 0 },
+        viewport: { once: true },
+        transition: { duration: 0.5, delay: 0.5 },
+      };
+
+  const msgMotion = (fromRight: boolean) =>
+    reduce
+      ? {}
+      : {
+          initial: { opacity: 0, x: fromRight ? 40 : -40 } as const,
+          animate: { opacity: 1, x: 0 },
+          transition: { duration: 0.35, ease: "easeOut" as const },
+        };
 
   return (
     <section
       ref={sectionRef}
-      className="relative py-20 md:py-28 px-6 overflow-hidden"
+      className="relative py-16 md:py-24 px-6 overflow-hidden min-h-full flex flex-col justify-center"
       style={{
         background: "linear-gradient(180deg, transparent 0%, var(--app-panel) 40%, var(--app-panel) 100%)",
       }}
     >
       <div className="max-w-4xl mx-auto">
-        {/* Section label */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.5 }}
-          className="text-center mb-10"
-        >
+        <motion.div {...revealProps} className="text-center mb-10">
           <span
             className="inline-block px-3 py-1 rounded-full text-xs font-semibold tracking-wide uppercase"
             style={{
@@ -102,16 +213,12 @@ export function ProductShowcase() {
               color: "var(--app-accent)",
             }}
           >
-            {lang === "zh" ? "不只是概念" : "Not just a concept"}
+            {t.label[lang]}
           </span>
         </motion.div>
 
-        {/* Simulated chat window */}
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-60px" }}
-          transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
+          {...chatRevealProps}
           className="relative mx-auto rounded-2xl overflow-hidden shadow-2xl"
           style={{
             background: "var(--app-panel)",
@@ -120,7 +227,6 @@ export function ProductShowcase() {
             boxShadow: "0 24px 64px rgba(0,0,0,0.18)",
           }}
         >
-          {/* Chat header bar */}
           <div
             className="flex items-center gap-3 px-5 py-3.5 border-b"
             style={{ borderColor: "var(--app-border)", background: "var(--app-panel-strong)" }}
@@ -128,6 +234,7 @@ export function ProductShowcase() {
             <div
               className="w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0"
               style={{ background: "var(--app-accent)", fontSize: "14px", fontWeight: 700 }}
+              aria-hidden="true"
             >
               A
             </div>
@@ -139,9 +246,10 @@ export function ProductShowcase() {
                 <span
                   className="w-2 h-2 rounded-full"
                   style={{ background: "var(--success)" }}
+                  aria-hidden="true"
                 />
                 <span style={{ color: "var(--app-muted)", fontSize: "11px" }}>
-                  {lang === "zh" ? "在线 · 本地运行" : "Online · Running locally"}
+                  {t.online[lang]}
                 </span>
               </div>
             </div>
@@ -154,12 +262,11 @@ export function ProductShowcase() {
                 color: "var(--success)",
               }}
             >
-              <HardDrive size={11} />
-              {lang === "zh" ? "本地" : "Local"}
+              <HardDrive size={11} aria-hidden="true" />
+              {t.local[lang]}
             </div>
           </div>
 
-          {/* Messages area */}
           <div
             className="px-5 py-5 space-y-4"
             style={{
@@ -170,14 +277,8 @@ export function ProductShowcase() {
               minHeight: "280px",
             }}
           >
-            {/* Step 0: User message */}
-            {step >= 0 && (
-              <motion.div
-                initial={{ opacity: 0, x: 40 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.35, ease: "easeOut" }}
-                className="flex justify-end"
-              >
+            {hasEntered && step >= 0 && (
+              <motion.div {...msgMotion(true)} className="flex justify-end">
                 <div
                   className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-br-md"
                   style={{
@@ -189,25 +290,25 @@ export function ProductShowcase() {
                   }}
                 >
                   {step === 0 ? (
-                    <Typewriter text={DEMO_MESSAGES[0][lang as "en" | "zh"]} />
+                    <Typewriter
+                      key={`user-${playKey}`}
+                      text={userText}
+                      onDone={onUserDone}
+                      reducedMotion={reduce}
+                    />
                   ) : (
-                    DEMO_MESSAGES[0][lang as "en" | "zh"]
+                    userText
                   )}
                 </div>
               </motion.div>
             )}
 
-            {/* Step 1: First Alvia reply */}
-            {step >= 1 && (
-              <motion.div
-                initial={{ opacity: 0, x: -40 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.35, ease: "easeOut" }}
-                className="flex justify-start gap-2"
-              >
+            {hasEntered && step >= 1 && (
+              <motion.div {...msgMotion(false)} className="flex justify-start gap-2">
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center text-white shrink-0"
                   style={{ background: "var(--app-accent)", fontSize: "11px", fontWeight: 700 }}
+                  aria-hidden="true"
                 >
                   A
                 </div>
@@ -222,35 +323,33 @@ export function ProductShowcase() {
                   }}
                 >
                   {step === 1 ? (
-                    <Typewriter text={DEMO_MESSAGES[1][lang as "en" | "zh"]} />
+                    <Typewriter
+                      key={`alvia1-${playKey}`}
+                      text={alvia1Text}
+                      onDone={onAlvia1Done}
+                      reducedMotion={reduce}
+                    />
                   ) : (
-                    DEMO_MESSAGES[1][lang as "en" | "zh"]
+                    alvia1Text
                   )}
                 </div>
               </motion.div>
             )}
 
-            {/* Step 2-3: Second Alvia reply with memory recall */}
-            {step >= 2 && (
-              <motion.div
-                initial={{ opacity: 0, x: -40 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.35, ease: "easeOut" }}
-                className="flex justify-start gap-2"
-              >
+            {hasEntered && step >= 2 && (
+              <motion.div {...msgMotion(false)} className="flex justify-start gap-2">
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center text-white shrink-0"
                   style={{ background: "var(--app-accent)", fontSize: "11px", fontWeight: 700 }}
+                  aria-hidden="true"
                 >
                   A
                 </div>
                 <div className="max-w-[75%] space-y-2">
-                  {/* Memory recalled indicator */}
                   {memoryGlow && (
                     <motion.div
-                      initial={{ opacity: 0, scale: 0.9 }}
+                      initial={reduce ? false : { opacity: 0, scale: 0.9 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0 }}
                       className="flex items-center gap-1.5 px-2 py-1 rounded-md"
                       style={{
                         background: "color-mix(in srgb, var(--app-accent) 14%, transparent)",
@@ -258,8 +357,8 @@ export function ProductShowcase() {
                         color: "var(--app-accent)",
                       }}
                     >
-                      <Brain size={12} />
-                      {lang === "zh" ? "记忆已调取" : "Memory recalled"}
+                      <Brain size={12} aria-hidden="true" />
+                      {t.memoryRecalled[lang]}
                     </motion.div>
                   )}
                   <div
@@ -273,9 +372,14 @@ export function ProductShowcase() {
                     }}
                   >
                     {step === 2 ? (
-                      <Typewriter text={DEMO_MESSAGES[2][lang as "en" | "zh"]} />
+                      <Typewriter
+                        key={`alvia2-${playKey}`}
+                        text={alvia2Text}
+                        onDone={onAlvia2Done}
+                        reducedMotion={reduce}
+                      />
                     ) : (
-                      DEMO_MESSAGES[2][lang as "en" | "zh"]
+                      alvia2Text
                     )}
                   </div>
                 </div>
@@ -284,25 +388,21 @@ export function ProductShowcase() {
           </div>
         </motion.div>
 
-        {/* Trust indicators below the chat window */}
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5, delay: 0.5 }}
+          {...trustRevealProps}
           className="flex flex-wrap justify-center gap-6 mt-8"
         >
           <div className="flex items-center gap-2" style={{ color: "var(--app-muted)", fontSize: "13px" }}>
-            <Shield size={14} style={{ color: "var(--success)" }} />
-            {lang === "zh" ? "零遥测 · 完全离线" : "Zero telemetry · Fully offline"}
+            <Shield size={14} style={{ color: "var(--success)" }} aria-hidden="true" />
+            {t.trustTelemetry[lang]}
           </div>
           <div className="flex items-center gap-2" style={{ color: "var(--app-muted)", fontSize: "13px" }}>
-            <HardDrive size={14} style={{ color: "var(--success)" }} />
-            {lang === "zh" ? "数据存储于你的机器" : "Data stored on your machine"}
+            <HardDrive size={14} style={{ color: "var(--success)" }} aria-hidden="true" />
+            {t.trustData[lang]}
           </div>
           <div className="flex items-center gap-2" style={{ color: "var(--app-muted)", fontSize: "13px" }}>
-            <Check size={14} style={{ color: "var(--success)" }} />
-            {lang === "zh" ? "无法关停" : "Unshutdownable"}
+            <Check size={14} style={{ color: "var(--success)" }} aria-hidden="true" />
+            {t.trustUnshutdownable[lang]}
           </div>
         </motion.div>
       </div>
