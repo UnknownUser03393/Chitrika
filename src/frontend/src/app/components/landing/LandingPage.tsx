@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LanguageProvider, useLang } from "./LanguageContext";
 import { translations } from "./i18n";
 import { HeroSection } from "./HeroSection";
@@ -26,6 +26,7 @@ const SECTION_IDS = [
 ] as const;
 
 const TIMELINE_INDEX = SECTION_IDS.indexOf("timeline");
+const PROMO_SECTION_DURATIONS_MS = [7000, 6200, 7800, 5600, 7800, 6800] as const;
 
 function LangToggle() {
   const { lang, toggle } = useLang();
@@ -104,6 +105,7 @@ function SectionDots({
 function FreeScrollLanding({ onGetStarted }: Props) {
   const timelineRef = useRef<HTMLDivElement>(null);
   const reduce = usePrefersReducedMotion();
+  const promo = false;
 
   const scrollToTimeline = () => {
     timelineRef.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
@@ -120,7 +122,7 @@ function FreeScrollLanding({ onGetStarted }: Props) {
       <ComparisonSection />
       <FeaturesSection />
       <TestimonialSection />
-      <FooterSection onGetStarted={onGetStarted} />
+      <FooterSection onGetStarted={onGetStarted} promo={promo} />
     </div>
   );
 }
@@ -129,6 +131,7 @@ function PagedLanding({ onGetStarted }: Props) {
   const [index, setIndex] = useState(0);
   const [direction, setDirection] = useState<1 | -1>(1);
   const slideRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const promo = false;
 
   const onChange = useCallback((next: number, dir: 1 | -1) => {
     setDirection(dir);
@@ -150,6 +153,44 @@ function PagedLanding({ onGetStarted }: Props) {
     onChange,
     getActiveScrollEl,
   });
+
+  useEffect(() => {
+    if (!promo || index >= SECTION_IDS.length - 1) return;
+
+    let scrollFrame = 0;
+    let scrollDelay = 0;
+    const activeSection = SECTION_IDS[index];
+
+    if (activeSection === "timeline") {
+      scrollDelay = window.setTimeout(() => {
+        const element = slideRefs.current[index];
+        if (!element) return;
+
+        const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight);
+        const startedAt = performance.now();
+        const scrollDuration = 5600;
+
+        const step = (now: number) => {
+          const progress = Math.min((now - startedAt) / scrollDuration, 1);
+          const eased = progress * progress * (3 - 2 * progress);
+          element.scrollTop = maxScroll * eased;
+          if (progress < 1) scrollFrame = window.requestAnimationFrame(step);
+        };
+
+        scrollFrame = window.requestAnimationFrame(step);
+      }, 650);
+    }
+
+    const pageTimeout = window.setTimeout(
+      () => go(index + 1),
+      PROMO_SECTION_DURATIONS_MS[index] ?? 5600,
+    );
+    return () => {
+      window.clearTimeout(pageTimeout);
+      window.clearTimeout(scrollDelay);
+      window.cancelAnimationFrame(scrollFrame);
+    };
+  }, [go, index, promo]);
 
   const goToTimeline = () => go(TIMELINE_INDEX);
 
@@ -197,10 +238,10 @@ const { lang } = useLang();
             {id === "showcase" && <ProductShowcase active={active} />}
             {id === "timeline" && <TimelineSection active={active} />}
             {id === "comparison" && <ComparisonSection active={active} />}
-            {id === "features" && <FeaturesSection active={active} />}
+            {id === "features" && <FeaturesSection active={active} autoPlay={promo} />}
             {id === "testimonials" && <TestimonialSection active={active} />}
             {id === "footer" && (
-              <FooterSection onGetStarted={onGetStarted} active={active} />
+              <FooterSection onGetStarted={onGetStarted} active={active} promo={promo} />
             )}
           </div>
         );

@@ -419,6 +419,61 @@ export async function healthCheck(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// App Settings (server-side, persisted in DB)
+// ---------------------------------------------------------------------------
+
+export interface AppSettings {
+  heartbeat_interval_minutes: number;
+  emotion_decay_rate: number;
+  loneliness_threshold: number;
+}
+
+export async function fetchSettings(): Promise<AppSettings> {
+  const res = await fetch(`${BASE}/settings`);
+  if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`);
+  return res.json();
+}
+
+export async function updateSettings(
+  updates: Partial<AppSettings>
+): Promise<AppSettings> {
+  const res = await fetch(`${BASE}/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to update settings: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Import (data migration)
+// ---------------------------------------------------------------------------
+
+export interface ImportResult {
+  imported_characters: number;
+  imported_conversations: number;
+  skipped_conversations: number;
+  total_in_source: number;
+}
+
+export async function importDoubao(sourcePath: string): Promise<ImportResult> {
+  const res = await fetch(`${BASE}/import/doubao`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_path: sourcePath }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

@@ -349,7 +349,7 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
             animate={{ opacity: 1 }}
             transition={{ duration: 0.12, ease: "easeOut" }}
             className="block text-[var(--app-text)] truncate"
-            style={{ fontSize: "19px", fontWeight: 700 }}
+            style={{ fontSize: "var(--app-font-title)", fontWeight: 700 }}
           >
             {chat?.name || "Chat"}
           </motion.span>
@@ -470,7 +470,7 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
       </div>
 
       <div className="shrink-0 px-5 pt-3 pb-4 bg-[var(--app-bg)] border-t border-[var(--app-border)]/70">
-        <div className="flex items-center rounded-2xl px-3 py-2 max-w-3xl mx-auto bg-[var(--app-panel)] border border-[var(--app-border)] shadow-[var(--app-shadow)]">
+        <div className="flex items-center rounded-xl px-3 py-2 max-w-3xl mx-auto bg-[var(--app-panel)]">
           <textarea
             ref={textareaRef}
             value={input}
@@ -478,16 +478,16 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
             onKeyDown={handleKeyDown}
             placeholder="Message"
             rows={1}
-            className="flex-1 bg-transparent text-[var(--app-text)] placeholder-[var(--app-subtle)] outline-none resize-none block mx-0.5"
+            className="chat-input-textarea flex-1 bg-transparent text-[var(--app-text)] placeholder-[var(--app-subtle)] resize-none block mx-0.5 border-0 outline-none shadow-none appearance-none focus:outline-none focus-visible:outline-none focus:border-0 focus:shadow-none"
             style={{
-              fontSize: "14px",
+              fontSize: "var(--app-font-input)",
               lineHeight: "20px",
               paddingTop: "5px",
               paddingBottom: "5px",
             }}
           />
           <button
-            className="p-1.5 text-[var(--app-muted)] hover:text-white transition-colors shrink-0 rounded-full hover:bg-white/10"
+            className="p-1.5 text-[var(--app-muted)] transition-colors shrink-0 rounded-full"
             aria-label="Attach file"
             title="Attach file — coming soon"
             disabled
@@ -497,10 +497,10 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
           <button
             onClick={handleSend}
             disabled={!input.trim() || isTyping}
-            className="p-1.5 rounded-full transition-all shrink-0"
+            className="p-1.5 rounded-full transition-colors shrink-0"
             style={{
               background:
-                input.trim() && !isTyping ? "var(--app-accent)" : "var(--app-elevated)",
+                input.trim() && !isTyping ? "var(--app-accent)" : "transparent",
               color: input.trim() && !isTyping ? "white" : "var(--app-muted)",
             }}
           >
@@ -554,7 +554,7 @@ function EmptyChat({ chat }: { chat: Chat | null }) {
       <div>
         <div
           className="text-[var(--app-text)] text-center"
-          style={{ fontSize: "21px", fontWeight: 700 }}
+          style={{ fontSize: "var(--app-font-headline)", fontWeight: 700 }}
         >
           {chat?.name || "Chat"}
         </div>
@@ -675,7 +675,7 @@ const MessageBubble = memo(function MessageBubble({
               <p
                 className="whitespace-pre-wrap break-words"
                 style={{
-                  fontSize: "14px",
+                  fontSize: "var(--app-font-bubble)",
                   lineHeight: "1.6",
                   color: isUser ? "white" : "var(--app-text)",
                 }}

@@ -40,12 +40,28 @@ async def lifespan(_app: FastAPI) -> Any:  # noqa: RUF029
     create_db_and_tables()
     logger.info("Database tables ready")
 
+    # Seed default settings rows (no-op if they already exist)
+    from src.chitrika.database import get_session
+    from src.chitrika.engines.settings_engine import SettingsEngine
+
+    try:
+        session = next(get_session())
+        try:
+            engine = SettingsEngine(session)
+            created = engine.apply_defaults()
+            if created:
+                logger.info("Seeded %d default settings", created)
+        finally:
+            session.close()
+    except Exception:
+        logger.exception("Failed to seed default settings — continuing")
+
     # Seed default character from skill_0624.txt
     try:
-        from src.chitrika.database import get_session
+        from src.chitrika.database import get_session as _gs2
         from src.chitrika.services.character_seed import seed_default_character
 
-        session = next(get_session())
+        session = next(_gs2())
         try:
             seed_default_character(session)
         finally:
@@ -53,30 +69,30 @@ async def lifespan(_app: FastAPI) -> Any:  # noqa: RUF029
     except Exception:
         logger.exception("Failed to seed default character — continuing")
 
-    # Seed default LLM provider from environment variables (backward compat)
+    # Seed default LLM provider (hardcoded defaults; user configures via Settings UI)
     try:
-        from src.chitrika.database import get_session as _gs
+        from src.chitrika.database import get_session as _gs3
         from src.chitrika.models.provider import LLMProvider
         from src.chitrika.services.provider_service import replace_provider_models
         from sqlmodel import select
 
-        session = next(_gs())
+        session = next(_gs3())
         try:
             existing = session.exec(select(LLMProvider)).first()
             if existing is None:
                 provider = LLMProvider(
                     name="deepseek",
                     display_name="DeepSeek",
-                    api_key=config.deepseek_api_key,
-                    base_url=config.deepseek_base_url,
-                    default_model=config.deepseek_model,
+                    api_key="",
+                    base_url="https://api.deepseek.com/v1",
+                    default_model="deepseek-chat",
                     is_default=True,
                 )
                 session.add(provider)
                 session.flush()
-                replace_provider_models(session, provider, [config.deepseek_model])
+                replace_provider_models(session, provider, ["deepseek-chat"])
                 session.commit()
-                logger.info("Default LLM provider 'deepseek' seeded from environment")
+                logger.info("Default LLM provider 'deepseek' seeded")
         finally:
             session.close()
     except Exception:
@@ -117,7 +133,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow frontend dev server
+# CORS — from chitrika.json / env at startup (change requires restart).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origin_list,
@@ -131,6 +147,7 @@ app.add_middleware(
 # Health check
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/health")
 def health_check() -> dict[str, str]:
     """Basic health check endpoint."""
@@ -141,14 +158,17 @@ def health_check() -> dict[str, str]:
 # Router registration (deferred imports to avoid circular deps)
 # ---------------------------------------------------------------------------
 
+
 def _register_routers() -> None:
     from src.chitrika.routes.chat_routes import router as chat_router
     from src.chitrika.routes.character_routes import router as character_router
     from src.chitrika.routes.desktop_routes import router as desktop_router
     from src.chitrika.routes.emotion_routes import router as emotion_router
     from src.chitrika.routes.heartbeat_routes import router as heartbeat_router
+    from src.chitrika.routes.import_routes import router as import_router
     from src.chitrika.routes.memory_routes import router as memory_router
     from src.chitrika.routes.provider_routes import router as provider_router
+    from src.chitrika.routes.settings_routes import router as settings_router
 
     app.include_router(chat_router, prefix="/api")
     app.include_router(character_router, prefix="/api")
@@ -156,7 +176,9 @@ def _register_routers() -> None:
     app.include_router(emotion_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")
     app.include_router(heartbeat_router, prefix="/api")
+    app.include_router(import_router, prefix="/api")
     app.include_router(provider_router, prefix="/api")
+    app.include_router(settings_router, prefix="/api")
 
 
 _register_routers()

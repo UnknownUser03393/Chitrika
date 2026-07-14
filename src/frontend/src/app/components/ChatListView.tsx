@@ -120,7 +120,7 @@ export function ChatListView({
       >
         <span
           className="flex-1 text-[var(--app-text)]"
-          style={{ fontSize: "19px", fontWeight: 700, letterSpacing: "-0.3px" }}
+          style={{ fontSize: "var(--app-font-title)", fontWeight: 700, letterSpacing: "-0.3px" }}
         >
           Chitrika
         </span>
@@ -151,7 +151,7 @@ export function ChatListView({
 
       {/* Search */}
       <div className="px-3 py-2 shrink-0">
-        <div className="flex items-center gap-2 rounded-2xl px-3 py-2 bg-[var(--app-bg)] border border-[var(--app-border)]">
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2 bg-[var(--app-panel)]">
           <Search size={15} className="text-[var(--app-muted)] shrink-0" />
           <input
             type="text"
@@ -159,7 +159,7 @@ export function ChatListView({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="bg-transparent flex-1 text-[var(--app-text)] placeholder-[var(--app-subtle)] outline-none"
-            style={{ fontSize: "14px" }}
+            style={{ fontSize: "var(--app-font-input)" }}
           />
         </div>
       </div>
@@ -300,14 +300,14 @@ function ChatItem({ chat, active, onClick, onContextMenu, showPin }: ChatItemPro
     <button
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className={`w-full flex items-center gap-3 px-3.5 py-2.5 mx-2 my-1 rounded-2xl transition-colors text-left ${
-        active ? "bg-[var(--app-accent-soft)] shadow-sm" : "hover:bg-[var(--app-hover)]"
+      className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${
+        active ? "bg-[var(--app-accent-soft)]" : "hover:bg-[var(--app-hover)]"
       }`}
     >
       {/* Avatar */}
       <div
-        className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-sm"
-        style={{ background: chat.color, fontSize: "17px", fontWeight: 700 }}
+        className="w-12 h-12 rounded-full flex items-center justify-center text-white shrink-0"
+        style={{ background: chat.color, fontSize: "18px", fontWeight: 700 }}
       >
         {chat.initials}
       </div>
@@ -325,18 +325,18 @@ function ChatItem({ chat, active, onClick, onContextMenu, showPin }: ChatItemPro
             )}
             <span
               className="text-[var(--app-text)] truncate"
-              style={{ fontSize: "15px", fontWeight: 500 }}
+              style={{ fontSize: "var(--app-font-label)", fontWeight: 500 }}
             >
               {chat.name}
             </span>
           </div>
-          <span className="text-[var(--app-muted)] shrink-0" style={{ fontSize: "12px" }}>
+          <span className="text-[var(--app-muted)] shrink-0" style={{ fontSize: "var(--app-font-meta)" }}>
             {chat.time}
           </span>
         </div>
 
         <div className="flex items-center justify-between gap-2 mt-0.5">
-          <span className="text-[var(--app-muted)] truncate" style={{ fontSize: "13px" }}>
+          <span className="text-[var(--app-muted)] truncate" style={{ fontSize: "var(--app-font-body)" }}>
             {chat.lastMessage}
           </span>
           {chat.unread > 0 && (

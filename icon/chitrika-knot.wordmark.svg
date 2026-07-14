@@ -1,0 +1,204 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 512" role="img" aria-labelledby="chitrika-knot-title chitrika-knot-desc">
+  <title id="chitrika-knot-title">Animated Chitrika Framework mark</title>
+  <desc id="chitrika-knot-desc">Two glowing ribbons draw themselves, rotate, slide left, and reveal the Chitrika Framework wordmark.</desc>
+
+  <style>
+    .chitrika-knot-ribbon {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 0;
+    }
+
+    .chitrika-knot-ribbon-a {
+      animation: chitrika-knot-draw 1.55s cubic-bezier(.22, 1, .36, 1) both;
+    }
+
+    .chitrika-knot-ribbon-b {
+      animation: chitrika-knot-draw 1.55s cubic-bezier(.22, 1, .36, 1) .16s both;
+    }
+
+    /* Start centered in the 960px lockup, then make room for the wordmark. */
+    .chitrika-knot-logo-stage {
+      transform: translateX(0);
+      animation: chitrika-knot-slide-left .82s cubic-bezier(.22, 1, .36, 1) 2.08s both;
+      will-change: transform;
+    }
+
+    /* Rotation overlaps the tail of the path-drawing animation. */
+    .chitrika-knot-logo-rotation {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: chitrika-knot-rotate 1.18s cubic-bezier(.16, 1, .3, 1) 1.02s both;
+      will-change: transform;
+    }
+
+    .chitrika-knot-wordmark {
+      opacity: 1;
+      transform: translateX(0);
+      animation: chitrika-knot-wordmark-reveal .86s cubic-bezier(.22, 1, .36, 1) 2.08s both;
+      will-change: transform, opacity;
+    }
+
+    .chitrika-knot-wordmark-text {
+      fill: #F5F5F7;
+      font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
+      font-size: 48px;
+      font-weight: 560;
+      letter-spacing: -1.35px;
+    }
+
+    .chitrika-knot-wordmark-framework {
+      fill: #B7B7C2;
+      font-weight: 420;
+    }
+
+    @keyframes chitrika-knot-draw {
+      from { stroke-dashoffset: 1; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    @keyframes chitrika-knot-rotate {
+      from { transform: rotate(0deg) scale(.985); }
+      to { transform: rotate(360deg) scale(1); }
+    }
+
+    @keyframes chitrika-knot-slide-left {
+      from { transform: translateX(224px); }
+      to { transform: translateX(0); }
+    }
+
+    @keyframes chitrika-knot-wordmark-reveal {
+      from {
+        opacity: 0;
+        transform: translateX(-168px);
+      }
+      18% { opacity: 1; }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .chitrika-knot-ribbon,
+      .chitrika-knot-gradient-motion,
+      .chitrika-knot-logo-stage,
+      .chitrika-knot-logo-rotation,
+      .chitrika-knot-wordmark {
+        animation: none !important;
+      }
+
+      .chitrika-knot-gradient-motion {
+        display: none;
+      }
+    }
+  </style>
+
+  <defs>
+    <linearGradient id="chitrika-knot-ribbon-a" x1="92" y1="88" x2="420" y2="424" gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+      <stop offset="0" stop-color="#FFC06E"/>
+      <stop offset="0.36" stop-color="#FF7488"/>
+      <stop offset="0.68" stop-color="#E96CAD"/>
+      <stop offset="1" stop-color="#B179FF"/>
+      <animateTransform class="chitrika-knot-gradient-motion"
+                        attributeName="gradientTransform"
+                        type="translate"
+                        values="-96 -96; 96 96; -96 -96"
+                        keyTimes="0; .5; 1"
+                        keySplines=".45 0 .55 1; .45 0 .55 1"
+                        calcMode="spline"
+                        dur="5.6s"
+                        repeatCount="indefinite"/>
+    </linearGradient>
+
+    <linearGradient id="chitrika-knot-ribbon-b" x1="420" y1="92" x2="94" y2="420" gradientUnits="userSpaceOnUse" spreadMethod="reflect">
+      <stop offset="0" stop-color="#8D83FF"/>
+      <stop offset="0.34" stop-color="#B179FF"/>
+      <stop offset="0.66" stop-color="#E96CAD"/>
+      <stop offset="1" stop-color="#FFB56E"/>
+      <animateTransform class="chitrika-knot-gradient-motion"
+                        attributeName="gradientTransform"
+                        type="translate"
+                        values="96 -96; -96 96; 96 -96"
+                        keyTimes="0; .5; 1"
+                        keySplines=".45 0 .55 1; .45 0 .55 1"
+                        calcMode="spline"
+                        dur="6.4s"
+                        repeatCount="indefinite"/>
+    </linearGradient>
+
+    <filter id="chitrika-knot-glow" x="-45%" y="-45%" width="190%" height="190%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="near-blur"/>
+      <feComponentTransfer in="near-blur" result="near-glow">
+        <feFuncA type="linear" slope="0.48"/>
+      </feComponentTransfer>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="15" result="far-blur"/>
+      <feComponentTransfer in="far-blur" result="far-glow">
+        <feFuncA type="linear" slope="0.20"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode in="far-glow"/>
+        <feMergeNode in="near-glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- The left edge is the reveal gate: the text moves right through it. -->
+    <clipPath id="chitrika-knot-wordmark-clip" clipPathUnits="userSpaceOnUse">
+      <rect x="434" y="168" width="500" height="176"/>
+    </clipPath>
+  </defs>
+
+  <g class="chitrika-knot-logo-stage">
+    <g class="chitrika-knot-logo-rotation" filter="url(#chitrika-knot-glow)">
+      <path class="chitrika-knot-ribbon chitrika-knot-ribbon-a" pathLength="1"
+            d="M 372 256
+               C 396.086 271.184 413.784 298.403 405.668 317.995
+               C 397.553 337.586 365.792 344.318 338.024 338.024
+               C 310.256 331.730 291.253 317.165 282.788 320.672
+               C 274.322 324.178 271.184 347.914 256 372
+               C 240.816 396.086 213.597 413.784 194.005 405.668
+               C 174.414 397.553 167.682 365.792 173.976 338.024
+               C 180.270 310.256 194.835 291.253 191.328 282.788
+               C 187.822 274.322 164.086 271.184 140 256
+               C 115.914 240.816 98.216 213.597 106.332 194.005
+               C 114.447 174.414 146.208 167.682 173.976 173.976
+               C 201.744 180.270 220.747 194.835 229.212 191.328
+               C 237.678 187.822 240.816 164.086 256 140
+               C 271.184 115.914 298.403 98.216 317.995 106.332
+               C 337.586 114.447 344.318 146.208 338.024 173.976
+               C 331.730 201.744 317.165 220.747 320.672 229.212
+               C 324.178 237.678 347.914 240.816 372 256 Z"
+            fill="none" stroke="url(#chitrika-knot-ribbon-a)" stroke-width="40"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+      <path class="chitrika-knot-ribbon chitrika-knot-ribbon-b" pathLength="1"
+            d="M 372 256
+               C 347.914 271.184 324.178 274.322 320.672 282.788
+               C 317.165 291.253 331.730 310.256 338.024 338.024
+               C 344.318 365.792 337.586 397.553 317.995 405.668
+               C 298.403 413.784 271.184 396.086 256 372
+               C 240.816 347.914 237.678 324.178 229.212 320.672
+               C 220.747 317.165 201.744 331.730 173.976 338.024
+               C 146.208 344.318 114.447 337.586 106.332 317.995
+               C 98.216 298.403 115.914 271.184 140 256
+               C 164.086 240.816 187.822 237.678 191.328 229.212
+               C 194.835 220.747 180.270 201.744 173.976 173.976
+               C 167.682 146.208 174.414 114.447 194.005 106.332
+               C 213.597 98.216 240.816 115.914 256 140
+               C 271.184 164.086 274.322 187.822 282.788 191.328
+               C 291.253 194.835 310.256 180.270 338.024 173.976
+               C 365.792 167.682 397.553 174.414 405.668 194.005
+               C 413.784 213.597 396.086 240.816 372 256 Z"
+            fill="none" stroke="url(#chitrika-knot-ribbon-b)" stroke-width="40"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+
+  <g clip-path="url(#chitrika-knot-wordmark-clip)">
+    <g class="chitrika-knot-wordmark">
+      <text class="chitrika-knot-wordmark-text" x="462" y="273">
+        <tspan>Chitrika</tspan><tspan class="chitrika-knot-wordmark-framework"> Framework</tspan>
+      </text>
+    </g>
+  </g>
+</svg>

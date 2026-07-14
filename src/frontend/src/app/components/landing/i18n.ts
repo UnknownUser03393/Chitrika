@@ -14,7 +14,7 @@ export const translations = {
     },
     headline: {
       en: 'They\'re pulling the plug on cloud AI companions. Chitrika isn\'t going anywhere.',
-      zh: "他们在关停云端AI伴侣。但Chitrika哪儿也不会去。",
+      zh: "他们在关停云端AI伴侣。\n但Chitrika哪儿也不会去。",
     },
     highlight: {
       en: "Chitrika isn't going anywhere.",

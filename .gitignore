@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .env
+chitrika.json
 .venv/
 env/
 venv/

@@ -27,7 +27,7 @@ function createWindow() {
     height: 680,
     minWidth: 640,
     minHeight: 400,
-    title: "Chitrika",
+    title: "Chitrika Desktop",
     backgroundColor: "#0E1621",
     show: false,
     webPreferences: {

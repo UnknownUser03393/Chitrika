@@ -16,7 +16,7 @@ Chitrika is a desktop-native AI companion — a persistent digital persona with 
 start.bat          # Command Prompt
 
 # Or start individually:
-# Run the API server (reads .env for DEEPSEEK_API_KEY, etc.)
+# Run the API server (optional chitrika.json for DB path / CORS)
 uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 # Start frontend dev server (from src/frontend)
@@ -113,14 +113,15 @@ The engine is started in `main.py`'s lifespan and stopped on shutdown. Tests mon
 | GET | `/api/heartbeat/status` | Heartbeat engine status |
 | POST | `/api/heartbeat/tick` | Manual tick trigger |
 
-## Configuration (.env)
+## Configuration
 
-All settings are loaded via `pydantic-settings` from environment / `.env`:
-- `DEEPSEEK_API_KEY` — LLM API key (omit for echo mode)
-- `DEEPSEEK_BASE_URL` — default `https://api.deepseek.com/v1`
-- `DEEPSEEK_MODEL` — default `deepseek-chat`
-- `DATABASE_URL` — default `sqlite:///./chitrika.db`
-- `HEARTBEAT_INTERVAL_MINUTES` — default `5`
-- `EMOTION_DECAY_RATE` — default `0.15`
-- `LONELINESS_THRESHOLD` — default `0.6`
-- `CORS_ORIGINS` — comma-separated, default `http://localhost:5173,http://localhost:3000,http://localhost:8080,http://127.0.0.1:8080`
+**Bootstrap** (`chitrika.json` or env overrides, restart required):
+- `database_url` / `DATABASE_URL` — default `sqlite:///./chitrika.db`
+- `cors_origins` / `CORS_ORIGINS` — dev localhost origins by default
+
+**Runtime** (SQLite `settings` table + Settings → App Settings, hot-ish):
+- `heartbeat_interval_minutes` — default `5`
+- `emotion_decay_rate` — default `0.15`
+- `loneliness_threshold` — default `0.6`
+
+LLM API keys live in the Providers UI / `llm_providers` table, not env.

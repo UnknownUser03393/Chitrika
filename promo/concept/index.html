@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chitrika — 宣传片视觉稿</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="deck" aria-label="Chitrika 宣传片视觉稿">
+    <section class="slide is-active scene-noise" data-duration="5200" aria-label="社区争议">
+      <img class="scene-bg scene-bg-blur" src="/promo/c0.jpeg" alt="B站关于智能体下线的公开视频画面">
+      <div class="noise-grid" aria-hidden="true"></div>
+      <div class="scanline" aria-hidden="true"></div>
+      <div class="scene-copy scene-copy-center">
+        <span class="eyebrow reveal">2026 · 07 · 15</span>
+        <h1 class="impact reveal delay-1">拒绝<br><span>模型狱</span></h1>
+        <p class="lead reveal delay-2">一场关于陪伴、记忆与告别的争议，正在发生。</p>
+      </div>
+      <div class="floating-comment comment-a">“更新之后，她还是她吗？”</div>
+      <div class="floating-comment comment-b">“不要替我决定什么时候告别。”</div>
+      <div class="floating-comment comment-c">“我们失去的不是一组参数。”</div>
+      <div class="notes">开场只使用模糊化搜索页，不展示账号身份。音效从通知噪音逐渐抽空。</div>
+    </section>
+
+    <section class="slide scene-question" data-duration="4700" aria-label="核心问题">
+      <div class="orb orb-left" aria-hidden="true"></div>
+      <div class="orb orb-right" aria-hidden="true"></div>
+      <div class="scene-copy scene-copy-center narrow">
+        <p class="micro reveal">THE REAL FEAR</p>
+        <h2 class="statement reveal delay-1">人们害怕的，<br>从来不只是一次<span>模型更新。</span></h2>
+        <div class="hairline reveal delay-2"></div>
+        <p class="whisper reveal delay-3">而是熟悉的“那个人”，突然消失。</p>
+      </div>
+      <div class="notes">黑场降噪，旁白停顿半秒后说出第二句。</div>
+    </section>
+
+    <section class="slide scene-reveal" data-duration="5600" aria-label="产品揭示">
+      <img class="scene-bg" src="../assets/landing-hero.png" alt="Chitrika Hero 页面">
+      <div class="cinema-shade" aria-hidden="true"></div>
+      <div class="reveal-card">
+        <p class="micro reveal">WHAT IF?</p>
+        <h2 class="reveal delay-1">如果她的<span>人格、记忆和关系</span><br>不必依附于任何一个模型？</h2>
+        <p class="reveal delay-2">不是另一款聊天应用。<br>而是一个真正属于你的数字生命容器。</p>
+      </div>
+      <div class="notes">音乐第一次进入和弦，产品界面由虚到实。</div>
+    </section>
+
+  </main>
+
+  <div class="chrome">
+    <div class="brand-mini">CHITRIKA <span>FILM CONCEPT 01</span></div>
+    <div class="counter"><span id="current">01</span><i></i><span>03</span></div>
+  </div>
+  <div class="progress"><i id="progressBar"></i></div>
+  <div class="hint">← → 切换镜头 · Space 自动播放 · F 全屏</div>
+
+  <script src="runtime.js"></script>
+</body>
+</html>

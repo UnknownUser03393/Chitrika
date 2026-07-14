@@ -71,7 +71,6 @@ def session(test_engine) -> Generator[Session, None, None]:
 def _patch_app(monkeypatch):
     """Force in-memory SQLite and disable heartbeat during tests."""
     monkeypatch.setattr(config, "database_url", "sqlite:///:memory:")
-    monkeypatch.setattr(config, "deepseek_api_key", "")  # no LLM calls in tests
 
     # Prevent the heartbeat engine from actually starting its scheduler
     def _noop_start(self):
@@ -94,6 +93,7 @@ def _patch_app(monkeypatch):
         "src.chitrika.services.character_seed.seed_default_character",
         _noop_seed,
     )
+
 
 
 # ---------------------------------------------------------------------------

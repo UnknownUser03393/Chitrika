@@ -15,6 +15,7 @@ type SidebarView = "chats" | "settings";
 
 export default function App() {
   const { preferences, setPreference } = usePreferences();
+  const promoMode = new URLSearchParams(window.location.search).get("promo") === "1";
   const [sidebarView, setSidebarView] = useState<SidebarView>("chats");
   const [activeChatId, setActiveChatId] = useState<string>("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -22,18 +23,28 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [messageRefreshKey, setMessageRefreshKey] = useState(0);
 
+  // First visit → promo concept slideshow (auto-play), then back to ?promo=1
+  const needsPromo = !preferences.landingSeen && !promoMode;
+
+  useEffect(() => {
+    if (needsPromo) {
+      window.location.replace('/promo/concept/?autoplay=1');
+    }
+  }, [needsPromo]);
+
   // Landing page visibility
   const [showLanding, setShowLanding] = useState(
-    !preferences.landingSeen
+    promoMode || !preferences.landingSeen
   );
 
   // If user already has conversations, auto-dismiss landing
   useEffect(() => {
+    if (promoMode) return;
     if (!preferences.landingSeen && chats.length > 0) {
       setShowLanding(false);
       setPreference("landingSeen", true);
     }
-  }, [chats, preferences.landingSeen, setPreference]);
+  }, [chats, preferences.landingSeen, promoMode, setPreference]);
 
   const handleGetStarted = () => {
     setShowLanding(false);
@@ -138,6 +149,8 @@ export default function App() {
     }
   };
 
+  if (needsPromo) return null;
+
   if (showLanding) {
     return (
       <>
@@ -170,17 +183,26 @@ export default function App() {
           transition={{ duration: 0.3 }}
           className="flex h-screen w-screen overflow-hidden bg-[var(--app-bg)] text-[var(--app-text)]"
         >
-      {/* Left Sidebar */}
+      {/* Left Sidebar — outer is clip-only (no bg/border/shadow).
+          Shadow/border live on the fixed-width inner panel so they are
+          clipped when width → 0; otherwise dark box-shadow bleeds as a
+          black residue after collapse. */}
       <motion.div
-        className="flex flex-col h-full shrink-0 bg-[var(--app-panel)] relative overflow-hidden border-r border-[var(--app-border)] shadow-[var(--app-shadow)]"
+        className="relative h-full shrink-0 overflow-hidden"
         initial={false}
-        animate={{
-          width: sidebarCollapsed ? 0 : 320,
-          opacity: sidebarCollapsed ? 0 : 1,
-        }}
+        animate={{ width: sidebarCollapsed ? 0 : 320 }}
         transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+        style={{
+          // Outer is clip-only — never paint border/shadow here
+          border: "none",
+          boxShadow: "none",
+          pointerEvents: sidebarCollapsed ? "none" : "auto",
+        }}
       >
-        <div className="overflow-x-hidden" style={{ width: "320px", height: "100%" }}>
+        <div
+          className="flex h-full flex-col overflow-x-hidden border-r border-[var(--app-border)] bg-[var(--app-panel)] shadow-[var(--app-shadow)]"
+          style={{ width: 320, height: "100%" }}
+        >
           <AnimatePresence mode="wait">
             {sidebarView === "chats" ? (
               <motion.div
@@ -189,7 +211,7 @@ export default function App() {
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: -30, opacity: 0 }}
                 transition={{ duration: 0.15, ease: "easeOut" }}
-                className="flex flex-col h-full w-full overflow-x-hidden"
+                className="flex h-full w-full flex-col overflow-x-hidden"
               >
                 <ChatListView
                   activeChatId={activeChatId}
@@ -211,7 +233,7 @@ export default function App() {
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: 30, opacity: 0 }}
                 transition={{ duration: 0.15, ease: "easeOut" }}
-                className="flex flex-col h-full w-full overflow-x-hidden"
+                className="flex h-full w-full flex-col overflow-x-hidden"
               >
                 <SettingsView
                   prefs={preferences}
@@ -228,7 +250,7 @@ export default function App() {
         </div>
       </motion.div>
 
-      {/* Collapsed top bar */}
+      {/* Collapsed reopen control — only the header strip, no full-height column */}
       <AnimatePresence>
         {sidebarCollapsed && (
           <motion.div
@@ -236,11 +258,11 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
-            className="flex flex-col shrink-0"
+            className="flex shrink-0 flex-col self-start"
           >
             <div
-              className="flex items-center px-4 bg-[var(--app-panel)]"
-              style={{ minHeight: "56px", width: "56px" }}
+              className="flex items-center border-b border-[var(--app-border)] bg-[var(--app-panel)] px-4"
+              style={{ minHeight: 64, width: 56 }}
             >
               <motion.button
                 initial={{ x: -12 }}
@@ -248,8 +270,9 @@ export default function App() {
                 exit={{ x: -12 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
                 onClick={() => setSidebarCollapsed(false)}
-                className="p-1.5 rounded-full text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
+                className="rounded-full p-1.5 text-[var(--app-muted)] transition-colors hover:text-[var(--app-text)]"
                 style={{ background: "transparent" }}
+                aria-label="Expand sidebar"
               >
                 <PanelLeftOpen size={18} />
               </motion.button>

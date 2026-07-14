@@ -1,6 +1,6 @@
 """Heartbeat Engine — background scheduler for periodic companion maintenance.
 
-Runs every 5 minutes (configurable) and performs:
+Runs every N minutes (configurable via DB settings) and performs:
 1. Emotion decay on all characters
 2. Memory importance review
 3. Loneliness assessment
@@ -18,10 +18,10 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlmodel import Session, select
 
-from src.chitrika.config import config
 from src.chitrika.database import session_scope
 from src.chitrika.engines.emotion_engine import EmotionEngine
 from src.chitrika.engines.memory_engine import MemoryEngine
+from src.chitrika.engines.settings_engine import SettingsEngine
 from src.chitrika.models.character import Character
 from src.chitrika.models.conversation import Conversation
 from src.chitrika.models.emotion import EmotionState
@@ -62,9 +62,37 @@ class HeartbeatEngine:
         self._tick_count = 0
         self._last_tick: datetime | None = None
 
-        # Populate from config
-        self.TICK_INTERVAL_MINUTES = config.heartbeat_interval_minutes
-        self.LONELINESS_THRESHOLD = config.loneliness_threshold
+        # Bootstrap from DB (or defaults if no rows yet)
+        self._load_settings()
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    def _load_settings(self) -> None:
+        """Read heartbeat-related settings from the database."""
+        try:
+            with self._session_factory() as session:
+                engine = SettingsEngine(session)
+                engine.apply_defaults()
+                settings = engine.get_typed()
+                self.TICK_INTERVAL_MINUTES = int(
+                    settings.get("heartbeat_interval_minutes", 5)
+                )
+                self.LONELINESS_THRESHOLD = float(
+                    settings.get("loneliness_threshold", 0.6)
+                )
+        except Exception:
+            logger.exception("Failed to load settings, using class defaults")
+
+    def _get_decay_rate(self) -> float:
+        """Read emotion_decay_rate from DB (fresh each tick)."""
+        try:
+            with self._session_factory() as session:
+                engine = SettingsEngine(session)
+                return float(engine.get("emotion_decay_rate", 0.15))
+        except Exception:
+            return 0.15
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -100,6 +128,15 @@ class HeartbeatEngine:
         self._running = False
         logger.info("Heartbeat stopped after %d ticks", self._tick_count)
 
+    def restart(self) -> None:
+        """Reload settings and reschedule with the new interval."""
+        was_running = self._running
+        if was_running:
+            self.stop()
+        self._load_settings()
+        if was_running:
+            self.start()
+
     @property
     def status(self) -> dict:
         """Return current engine status for the API."""
@@ -119,6 +156,11 @@ class HeartbeatEngine:
         """Execute one heartbeat cycle for all enabled characters."""
         self._tick_count += 1
         self._last_tick = utcnow()
+
+        # Re-read settings each tick so UI changes take effect without restart
+        self._load_settings()
+        self._check_reschedule()
+
         logger.debug("Heartbeat tick #%d", self._tick_count)
 
         with self._session_factory() as session:
@@ -143,13 +185,31 @@ class HeartbeatEngine:
                 session.rollback()
                 logger.exception("Heartbeat tick #%d failed", self._tick_count)
 
+    def _check_reschedule(self) -> None:
+        """If the interval changed, reschedule the APScheduler job."""
+        job = self._scheduler.get_job("heartbeat_tick")
+        if job is None:
+            return
+        current_minutes = job.trigger.interval.total_seconds() / 60  # type: ignore[union-attr]
+        if int(current_minutes) != self.TICK_INTERVAL_MINUTES:
+            logger.info(
+                "Heartbeat interval changed %d → %d min — rescheduling",
+                int(current_minutes),
+                self.TICK_INTERVAL_MINUTES,
+            )
+            job.reschedule(
+                trigger="interval",
+                minutes=self.TICK_INTERVAL_MINUTES,
+            )
+
     def _process_character(self, session: Session, character: Character) -> None:
         """Run the full heartbeat pipeline for a single character."""
         emotion = EmotionEngine(session)
         memory = MemoryEngine(session)
 
-        # 1. Emotion decay
-        state = emotion.apply_decay(character.id, config.emotion_decay_rate)
+        # 1. Emotion decay (read decay rate fresh each tick)
+        decay_rate = self._get_decay_rate()
+        state = emotion.apply_decay(character.id, decay_rate)
         self._log_task(session, character.id, "emotion_decay", "completed")
 
         # 2. Memory review

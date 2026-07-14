@@ -58,3 +58,12 @@ body {
 button:focus:not(:focus-visible) {
   outline: none;
 }
+
+.chat-input-textarea:focus,
+.chat-input-textarea:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+  -webkit-appearance: none;
+  appearance: none;
+}

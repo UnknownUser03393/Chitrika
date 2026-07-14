@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import { motion } from "motion/react";
+import { useCallback, useEffect, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { ArrowDown, Zap } from "lucide-react";
 import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
+import { HeroIntro } from "../../StartupSplash";
 
 interface Props {
   onGetStarted: () => void;
@@ -29,6 +30,11 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
   const t = translations.hero;
   const { isAfter, days, hours } = useCountdown();
   const reduce = usePrefersReducedMotion();
+  const [showIntro, setShowIntro] = useState(!reduce);
+
+  const handleIntroDone = useCallback(() => {
+    setShowIntro(false);
+  }, []);
 
   const countdownText = isAfter
     ? t.countdownPast[lang]
@@ -44,8 +50,23 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
         };
 
   return (
-    <section className="relative min-h-full h-full flex flex-col items-center justify-center px-6 text-center overflow-hidden">
-      {/* Ambient glow */}
+    <section
+      className="relative min-h-full h-full flex flex-col items-center justify-center px-6 text-center overflow-hidden"
+      style={{
+        background:
+          "radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--app-accent) 10%, transparent), transparent 26rem), linear-gradient(180deg, color-mix(in srgb, var(--app-bg) 94%, #070B14 6%), var(--app-bg))",
+      }}
+    >
+      <AnimatePresence>
+        {showIntro && <HeroIntro onDone={handleIntroDone} />}
+      </AnimatePresence>
+
+      <motion.div
+        animate={showIntro ? { opacity: 0 } : { opacity: 1 }}
+        transition={{ duration: showIntro ? 0.15 : 0.45, delay: showIntro ? 0 : 0.08 }}
+        className="relative flex min-h-full w-full flex-col items-center justify-center"
+      >
+        {/* Ambient glow */}
       <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
         {reduce ? (
           <div
@@ -87,7 +108,11 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
 
       <motion.h1
         {...fadeUp(0.15)}
-        className="relative max-w-3xl text-4xl md:text-5xl lg:text-6xl font-bold leading-tight tracking-tight"
+        className={`relative mx-auto whitespace-pre-line text-balance font-bold tracking-tight ${
+          lang === "en"
+            ? "max-w-[18ch] text-3xl md:text-4xl lg:text-[3.35rem] leading-[1.02]"
+            : "max-w-[14ch] text-4xl md:text-5xl lg:text-6xl leading-[1.12]"
+        }`}
         style={{ color: "var(--app-text)" }}
       >
         {t.headline[lang]}
@@ -196,6 +221,7 @@ export function HeroSection({ onGetStarted, onScrollToTimeline }: Props) {
             />
           )}
         </div>
+      </motion.div>
       </motion.div>
     </section>
   );

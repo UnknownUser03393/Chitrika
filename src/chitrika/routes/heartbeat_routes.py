@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlmodel import Session
 
-from src.chitrika.config import config
+from src.chitrika.database import get_session
 from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
+from src.chitrika.engines.settings_engine import SettingsEngine
 
 logger = logging.getLogger("chitrika.routes.heartbeat")
 
@@ -29,13 +31,17 @@ def set_heartbeat_engine(engine: HeartbeatEngine) -> None:
 
 
 @router.get("/heartbeat/status")
-def get_heartbeat_status() -> dict:
+def get_heartbeat_status(session: Session = Depends(get_session)) -> dict:
     """Return the current heartbeat engine status."""
     if _engine is None:
+        # Read defaults from DB settings
+        settings = SettingsEngine(session)
+        settings.apply_defaults()
+        data = settings.get_typed()
         return {
             "running": False,
-            "tick_interval_minutes": config.heartbeat_interval_minutes,
-            "loneliness_threshold": config.loneliness_threshold,
+            "tick_interval_minutes": data.get("heartbeat_interval_minutes", 5),
+            "loneliness_threshold": data.get("loneliness_threshold", 0.6),
             "tick_count": 0,
             "last_tick": None,
         }

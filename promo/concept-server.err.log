@@ -1,0 +1,64 @@
+127.0.0.1 - - [13/Jul/2026 13:13:11] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /promo/concept/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /promo/assets/bilibili-715-search.png HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /promo/assets/chitrika-hero.png HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /promo/concept/runtime.js HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /promo/assets/chitrika-showcase.png HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /icon/chitrika-knot-dark-separated-move.svg HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:13:23] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:13:23] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:15:07] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/concept/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/assets/landing-hero.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/assets/landing-1.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/assets/landing-2.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/concept/runtime.js HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/assets/landing-3.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/assets/landing-4.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:18:07] "GET /promo/assets/landing-5.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /promo/concept/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /promo/assets/landing-hero.png HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /promo/concept/runtime.js HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /promo/concept/ HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 13:30:15] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:30:15] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:31:15] "GET /promo/concept/ HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 13:31:15] "GET /promo/concept/style.css HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 13:31:15] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 13:31:15] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 13:31:15] "GET /promo/concept/runtime.js HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 14:33:47] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 14:33:47] "GET /promo/concept/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 14:33:47] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 14:33:47] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 14:33:47] "GET /promo/assets/landing-hero.png HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 14:33:47] "GET /promo/concept/runtime.js HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 14:33:47] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 14:33:47] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 14:56:57] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 14:56:57] "GET /promo/assets/landing-hero.png HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 14:56:57] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 14:56:57] "GET /promo/concept/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 14:56:57] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 14:56:57] "GET /promo/concept/runtime.js HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 15:04:48] "GET /promo/concept/ HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 15:04:48] "GET /promo/concept/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 15:04:48] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 15:04:48] "GET /c0.jpeg HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 15:04:48] "GET /promo/assets/landing-hero.png HTTP/1.1" 304 -
+127.0.0.1 - - [13/Jul/2026 15:04:48] "GET /promo/concept/runtime.js HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 15:04:48] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 15:04:48] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [13/Jul/2026 16:00:44] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [13/Jul/2026 16:00:45] code 404, message File not found
+127.0.0.1 - - [13/Jul/2026 16:00:45] "GET /favicon.ico HTTP/1.1" 404 -

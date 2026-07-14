@@ -1,0 +1,22 @@
+
+> chitrika-frontend@0.0.1 dev D:\Development\PythonProject\Chitrika\src\frontend
+> vite "--host" "0.0.0.0"
+
+
+  [32m[1mVITE[22m v6.3.5[39m  [2mready in [0m[1m495[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://198.18.0.1:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.19.192.1:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.24.144.1:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.17.96.1:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.1.10:[1m8080[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://172.29.208.1:[1m8080[22m/[39m
+[2m4:18:24 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/@fs/D:\Development\PythonProject\Chitrika\src\frontend\src\app\components\landing\FeaturesSection.tsx, /src/styles/index.css[22m
+[2m4:22:35 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/@fs/D:\Development\PythonProject\Chitrika\src\frontend\src\app\StartupSplash.tsx, /src/styles/index.css[22m
+[2m4:35:32 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/@fs/D:\Development\PythonProject\Chitrika\src\frontend\src\app\StartupSplash.tsx, /src/styles/index.css[22m
+[2m8:51:05 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/@fs/D:\Development\PythonProject\Chitrika\src\frontend\src\app\components\landing\FooterSection.tsx, /src/styles/index.css[22m
+[2m8:57:20 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/@fs/D:\Development\PythonProject\Chitrika\src\frontend\src\app\StartupSplash.tsx, /src/styles/index.css[22m
+[2m8:59:28 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/@fs/D:\Development\PythonProject\Chitrika\src\frontend\src\app\StartupSplash.tsx, /src/styles/index.css[22m
+[2m9:17:02 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/app/App.tsx, /src/styles/index.css[22m
+[2m9:17:04 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/app/components/landing/LandingPage.tsx, /src/styles/index.css[22m

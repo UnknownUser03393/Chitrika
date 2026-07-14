@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Heart, Brain, Activity, Users, Shield, Infinity as InfinityIcon, ArrowRight } from "lucide-react";
 import { useLang } from "./LanguageContext";
@@ -229,15 +229,27 @@ const PREVIEWS = [
 
 interface FeaturesSectionProps {
   active?: boolean;
+  autoPlay?: boolean;
 }
 
-export function FeaturesSection({ active }: FeaturesSectionProps = {}) {
+export function FeaturesSection({ active, autoPlay = false }: FeaturesSectionProps = {}) {
   const { lang } = useLang();
   const t = translations.features;
   const reduce = usePrefersReducedMotion();
   const { ref, isVisible } = useScrollReveal({ skip: reduce, active });
   const [activeIdx, setActiveIdx] = useState(0);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  useEffect(() => {
+    if (!autoPlay || !active) return;
+
+    setActiveIdx(0);
+    const interval = window.setInterval(() => {
+      setActiveIdx((current) => Math.min(current + 1, t.cards.length - 1));
+    }, 1100);
+
+    return () => window.clearInterval(interval);
+  }, [active, autoPlay, t.cards.length]);
 
   const selectTab = useCallback((index: number) => {
     setActiveIdx(index);
@@ -385,6 +397,7 @@ export function FeaturesSection({ active }: FeaturesSectionProps = {}) {
         <div className="flex-1 min-w-0">
           <motion.div
             {...enter({ delay: 0.2 })}
+            layout="size"
             className="sticky top-8 rounded-2xl overflow-hidden border"
             style={{
               background: "var(--app-panel-strong)",
@@ -421,10 +434,15 @@ export function FeaturesSection({ active }: FeaturesSectionProps = {}) {
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={activeIdx}
+                    layout
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -8 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    transition={{
+                      opacity: { duration: 0.2, ease: "easeOut" },
+                      y: { duration: 0.2, ease: "easeOut" },
+                      layout: { duration: 0.38, ease: [0.25, 0.46, 0.45, 0.94] },
+                    }}
                   >
                     <ActivePreview reduce={reduce} />
                   </motion.div>

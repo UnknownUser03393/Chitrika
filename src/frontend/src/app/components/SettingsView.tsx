@@ -16,10 +16,15 @@ import {
   Zap,
   Eye,
   EyeOff,
+  Sliders,
+  Heart,
+  Activity,
+  Gauge,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import * as Switch from "@radix-ui/react-switch";
+import * as SliderPrimitive from "@radix-ui/react-slider";
 import type { AIModel } from "./mockData";
 import {
   fetchCharacters,
@@ -31,8 +36,10 @@ import {
   createProvider,
   updateProvider,
   deleteProvider,
+  fetchSettings,
+  updateSettings,
 } from "../services/api";
-import type { Character, LLMProvider, LLMProviderCreate, LLMProviderUpdate } from "../services/api";
+import type { Character, LLMProvider, LLMProviderCreate, LLMProviderUpdate, AppSettings } from "../services/api";
 import { CharacterForm } from "./CharacterForm";
 import { ProviderForm } from "./ProviderForm";
 import { themes } from "../preferences";
@@ -45,7 +52,7 @@ interface Props {
   setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
 }
 
-type Category = "main" | "preferences" | "provider" | "models";
+type Category = "main" | "preferences" | "provider" | "models" | "app";
 
 export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   const [category, setCategory] = useState<Category>("main");
@@ -53,18 +60,22 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [loading, setLoading] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
-  // Fetch characters and providers from backend
+  // Fetch characters, providers, and settings from backend
   useEffect(() => {
     setLoading(true);
     Promise.all([
       fetchCharacters(),
       fetchProviders(),
+      fetchSettings().catch(() => null),
     ])
-      .then(([chars, provs]) => {
+      .then(([chars, provs, settings]) => {
         setCharacters(chars);
         setModels(chars.map(characterToModel));
         setProviders(provs);
+        if (settings) setAppSettings(settings);
         setLoading(false);
       })
       .catch(() => {
@@ -178,6 +189,20 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
     }
   };
 
+  const handleSaveSettings = async (updates: Partial<AppSettings>) => {
+    setSettingsSaving(true);
+    try {
+      const updated = await updateSettings(updates);
+      setAppSettings(updated);
+      toast.success("Settings saved");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to save settings";
+      toast.error(msg);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   const navigateTo = (cat: Category) => {
     showForm?.(null);
     setCategory(cat);
@@ -199,7 +224,9 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
       ? "Preferences"
       : category === "provider"
       ? "LLM Provider"
-      : "Model List";
+      : category === "models"
+      ? "Model List"
+      : "App Settings";
 
   return (
     <div className="flex flex-col h-full">
@@ -234,6 +261,7 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
                 onPreferences={() => navigateTo("preferences")}
                 onProvider={() => navigateTo("provider")}
                 onModels={() => navigateTo("models")}
+                onAppSettings={() => navigateTo("app")}
               />
             </motion.div>
           )}
@@ -300,6 +328,22 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
                   showForm={showForm}
                 />
               )}
+            </motion.div>
+          )}
+          {category === "app" && (
+            <motion.div
+              key="app"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="w-full overflow-x-hidden"
+            >
+              <AppSettingsPanel
+                settings={appSettings}
+                saving={settingsSaving}
+                onSave={handleSaveSettings}
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -387,16 +431,61 @@ function SwitchToggle({
   );
 }
 
+function AppSlider({
+  value,
+  min = 0,
+  max = 1,
+  step = 0.01,
+  onValueChange,
+}: {
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onValueChange: (value: number) => void;
+}) {
+  return (
+    <SliderPrimitive.Root
+      value={[value]}
+      min={min}
+      max={max}
+      step={step}
+      onValueChange={([next]) => onValueChange(next)}
+      className="relative flex h-5 w-full flex-1 touch-none select-none items-center"
+    >
+      <SliderPrimitive.Track
+        className="relative h-1.5 grow overflow-hidden rounded-full"
+        style={{ background: "var(--app-border)" }}
+      >
+        <SliderPrimitive.Range
+          className="absolute h-full rounded-full"
+          style={{ background: "var(--app-accent)" }}
+        />
+      </SliderPrimitive.Track>
+      <SliderPrimitive.Thumb
+        className="block size-[18px] shrink-0 rounded-full outline-none transition-transform hover:scale-110"
+        style={{
+          background: "#fff",
+          border: "2.5px solid var(--app-accent)",
+          boxShadow: "0 1px 5px rgba(0,0,0,0.22)",
+        }}
+      />
+    </SliderPrimitive.Root>
+  );
+}
+
 /* -- Main settings ----------------------------------------------- */
 
 function MainSettings({
   onPreferences,
   onProvider,
   onModels,
+  onAppSettings,
 }: {
   onPreferences: () => void;
   onProvider: () => void;
   onModels: () => void;
+  onAppSettings: () => void;
 }) {
   return (
     <div className="py-2">
@@ -463,6 +552,19 @@ function MainSettings({
           sublabel="Manage available AI models"
           onClick={onModels}
         />
+        <NavItem
+          icon={
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "rgba(245,158,11,0.15)" }}
+            >
+              <Sliders size={16} style={{ color: "#F59E0B" }} />
+            </div>
+          }
+          label="App Settings"
+          sublabel="Heartbeat, emotion, CORS"
+          onClick={onAppSettings}
+        />
       </div>
 
       <div className="px-2 mt-3 space-y-0.5">
@@ -487,100 +589,164 @@ function PreferencesSettings({
   prefs: Preferences;
   setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
 }) {
+  const activeTheme = themes.find((theme) => theme.id === prefs.theme);
+  const themeDescriptions: Record<ThemeId, string> = {
+    midnight: "Dark blue with a warmer accent",
+    graphite: "Neutral dark with a softer green accent",
+    dawn: "Light theme with warm contrast",
+  };
+  const fontSizeOptions = [
+    {
+      value: "Small",
+      label: "Small",
+      sample: "Compact",
+      description: "Tighter spacing and denser reading",
+      previewSize: "12px",
+    },
+    {
+      value: "Medium",
+      label: "Medium",
+      sample: "Balanced",
+      description: "Default size for everyday chat",
+      previewSize: "14px",
+    },
+    {
+      value: "Large",
+      label: "Large",
+      sample: "Comfortable",
+      description: "Bigger text and easier scanning",
+      previewSize: "16px",
+    },
+  ] as const;
+
   return (
-    <div className="py-2 px-2 space-y-0.5">
+    <div className="py-2 px-2 space-y-1.5">
       <SectionLabel label="Appearance" />
 
-      {/* Theme */}
-      <div className="flex items-start gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
-        {prefs.theme === "dawn" ? (
-          <Sun size={18} className="text-[var(--app-muted)] shrink-0 mt-1" />
-        ) : (
-          <Moon size={18} className="text-[var(--app-muted)] shrink-0 mt-1" />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="text-[var(--app-text)]" style={{ fontSize: "14px" }}>
-            Theme
-          </div>
-          <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-            {themes.find((theme) => theme.id === prefs.theme)?.label}
+      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
+        <div className="flex items-start gap-3">
+          {prefs.theme === "dawn" ? (
+            <Sun size={18} className="text-[var(--app-muted)] shrink-0 mt-0.5" />
+          ) : (
+            <Moon size={18} className="text-[var(--app-muted)] shrink-0 mt-0.5" />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
+              Theme
+            </div>
+            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+              {activeTheme?.label}
+            </div>
           </div>
         </div>
-        <div className="flex gap-1.5">
-          {themes.map((theme) => (
-            <button
-              key={theme.id}
-              onClick={() => setPref("theme", theme.id as ThemeId)}
-              className="h-9 w-12 rounded-lg border transition-all"
-              style={{
-                background: theme.colors[0],
-                borderColor:
-                  prefs.theme === theme.id
-                    ? "var(--app-accent)"
-                    : "var(--app-border)",
-                boxShadow:
-                  prefs.theme === theme.id
-                    ? "0 0 0 2px var(--app-accent-soft)"
-                    : "none",
-              }}
-              title={theme.label}
-            >
-              <span className="flex h-full w-full overflow-hidden rounded-[6px]">
-                {theme.colors.map((color) => (
-                  <span key={color} className="flex-1" style={{ background: color }} />
-                ))}
-              </span>
-            </button>
-          ))}
+
+        <div className="space-y-2">
+          {themes.map((theme) => {
+            const selected = prefs.theme === theme.id;
+            const ThemeIcon = theme.id === "dawn" ? Sun : Moon;
+
+            return (
+              <button
+                key={theme.id}
+                onClick={() => setPref("theme", theme.id)}
+                className="w-full flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors"
+                style={{
+                  background: selected
+                    ? "color-mix(in srgb, var(--app-accent) 10%, var(--app-elevated))"
+                    : "var(--app-elevated)",
+                  borderColor: selected ? "var(--app-accent)" : "transparent",
+                }}
+                title={theme.label}
+              >
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-black/10">
+                  <ThemeIcon size={16} className="text-[var(--app-text)]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 600 }}>
+                    {theme.label}
+                  </span>
+                  <div className="text-[var(--app-muted)] mt-0.5" style={{ fontSize: "12px", lineHeight: 1.45 }}>
+                    {themeDescriptions[theme.id]}
+                  </div>
+                </div>
+                <span className="flex h-9 w-16 overflow-hidden rounded-xl shrink-0 border border-white/5">
+                  {theme.colors.map((color) => (
+                    <span key={color} className="flex-1" style={{ background: color }} />
+                  ))}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Font Size */}
-      <div className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
-        <Type size={18} className="text-[var(--app-muted)] shrink-0" />
-        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px" }}>
-          Font Size
-        </span>
-        <div className="flex rounded-lg overflow-hidden" style={{ background: "var(--app-elevated)" }}>
-          {["Small", "Medium", "Large"].map((s) => (
-            <button
-              key={s}
-              onClick={() => setPref("fontSize", s)}
-              className="px-2.5 py-1 transition-colors"
-              style={{
-                background: prefs.fontSize === s ? "var(--app-accent)" : "transparent",
-                color: prefs.fontSize === s ? "white" : "var(--app-muted)",
-                fontSize: "11px",
-                fontWeight: 500,
-              }}
-            >
-              {s}
-            </button>
-          ))}
+      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
+        <div className="flex items-center gap-3">
+          <Type size={18} className="text-[var(--app-muted)] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
+              Font Size
+            </div>
+            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+              {prefs.fontSize}
+            </div>
+          </div>
         </div>
-      </div>
 
-      {/* Language */}
-      <div className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
-        <Globe size={18} className="text-[var(--app-muted)] shrink-0" />
-        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px" }}>
-          Language
-        </span>
-        <span className="text-[var(--app-muted)]" style={{ fontSize: "13px" }}>
-          English
-        </span>
-        <ChevronRight size={14} className="text-[var(--app-muted)]" />
+        <div className="space-y-2">
+          {fontSizeOptions.map((option) => {
+            const selected = prefs.fontSize === option.value;
+
+            return (
+              <button
+                key={option.value}
+                onClick={() => setPref("fontSize", option.value)}
+                className="w-full flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors"
+                style={{
+                  background: selected
+                    ? "color-mix(in srgb, var(--app-accent) 10%, var(--app-elevated))"
+                    : "var(--app-elevated)",
+                  borderColor: selected ? "var(--app-accent)" : "transparent",
+                }}
+              >
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    background: selected ? "color-mix(in srgb, var(--app-accent) 16%, transparent)" : "rgba(255,255,255,0.04)",
+                    color: selected ? "var(--app-accent)" : "var(--app-text)",
+                    fontSize: option.previewSize,
+                    fontWeight: 700,
+                  }}
+                >
+                  Aa
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 600 }}>
+                      {option.label}
+                    </span>
+                    <span className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+                      {option.sample}
+                    </span>
+                  </div>
+                  <div className="text-[var(--app-muted)] mt-0.5" style={{ fontSize: "12px", lineHeight: 1.45 }}>
+                    {option.description}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-2">
         <SectionLabel label="Messaging" />
       </div>
 
-      {/* Stream Responses */}
-      <div className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
+      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
         <Zap size={18} className="text-[var(--app-muted)] shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-[var(--app-text)]" style={{ fontSize: "14px" }}>
+          <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
             Stream Responses
           </div>
           <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
@@ -593,11 +759,10 @@ function PreferencesSettings({
         />
       </div>
 
-      {/* Send on Enter */}
-      <div className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
+      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
         <CornerDownLeft size={18} className="text-[var(--app-muted)] shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-[var(--app-text)]" style={{ fontSize: "14px" }}>
+          <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
             Send on Enter
           </div>
           <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
@@ -610,10 +775,9 @@ function PreferencesSettings({
         />
       </div>
 
-      {/* Show Timestamps */}
-      <div className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
+      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
         <Clock size={18} className="text-[var(--app-muted)] shrink-0" />
-        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px" }}>
+        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
           Show Timestamps
         </span>
         <SwitchToggle
@@ -626,10 +790,9 @@ function PreferencesSettings({
         <SectionLabel label="Notifications" />
       </div>
 
-      {/* Notifications */}
-      <div className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5">
+      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
         <Bell size={18} className="text-[var(--app-muted)] shrink-0" />
-        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px" }}>
+        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
           Push Notifications
         </span>
         <SwitchToggle
@@ -642,9 +805,9 @@ function PreferencesSettings({
         <SectionLabel label="Danger Zone" color="#EF4444" />
       </div>
 
-      <button className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-red-500/10 transition-colors">
+      <button className="w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-red-500/10 transition-colors text-left">
         <Trash2 size={18} className="text-[var(--app-danger)] shrink-0" />
-        <span className="text-[var(--app-danger)]" style={{ fontSize: "14px" }}>
+        <span className="text-[var(--app-danger)]" style={{ fontSize: "14px", fontWeight: 500 }}>
           Clear All Chat History
         </span>
       </button>
@@ -1026,6 +1189,187 @@ function ModelItem({
         <Trash2 size={14} />
       </button>
       <SwitchToggle checked={model.enabled} onCheckedChange={onToggle} />
+    </div>
+  );
+}
+
+/* -- App Settings ------------------------------------------------ */
+
+function AppSettingsPanel({
+  settings,
+  saving,
+  onSave,
+}: {
+  settings: AppSettings | null;
+  saving: boolean;
+  onSave: (updates: Partial<AppSettings>) => Promise<void>;
+}) {
+  // Local form state so we can edit before saving
+  const [form, setForm] = useState<AppSettings>({
+    heartbeat_interval_minutes: 5,
+    emotion_decay_rate: 0.15,
+    loneliness_threshold: 0.6,
+  });
+  const [dirty, setDirty] = useState(false);
+
+  // Sync from props when settings load
+  useEffect(() => {
+    if (settings) {
+      setForm(settings);
+      setDirty(false);
+    }
+  }, [settings]);
+
+  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setDirty(true);
+  };
+
+  const handleSave = () => {
+    onSave(form).then(() => setDirty(false));
+  };
+
+  if (!settings) {
+    return (
+      <div className="py-8 text-center">
+        <div className="flex gap-1.5 justify-center">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="w-2 h-2 rounded-full bg-[var(--app-muted)] animate-bounce"
+              style={{ animationDelay: `${i * 0.15}s` }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="py-2 px-2 space-y-1.5">
+      <SectionLabel label="Server Configuration" />
+
+      {/* Heartbeat interval */}
+      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
+        <div className="flex items-center gap-3">
+          <Activity size={18} className="text-[var(--app-muted)] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
+              Heartbeat Interval
+            </div>
+            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+              Minutes between background ticks
+            </div>
+          </div>
+        </div>
+        <input
+          type="number"
+          min={1}
+          max={1440}
+          value={form.heartbeat_interval_minutes}
+          onChange={(e) => update("heartbeat_interval_minutes", parseInt(e.target.value) || 5)}
+          className="w-full rounded-xl px-3 py-2 text-[var(--app-text)] text-sm"
+          style={{
+            background: "var(--app-elevated)",
+            border: "1px solid var(--app-border)",
+            outline: "none",
+          }}
+        />
+      </div>
+
+      {/* Emotion decay rate */}
+      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
+        <div className="flex items-center gap-3">
+          <Gauge size={18} className="text-[var(--app-muted)] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
+              Emotion Decay Rate
+            </div>
+            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+              How fast emotions drift toward neutral (0–1)
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <AppSlider
+            value={form.emotion_decay_rate}
+            min={0}
+            max={1}
+            step={0.01}
+            onValueChange={(v) => update("emotion_decay_rate", v)}
+          />
+          <span
+            className="w-12 text-right shrink-0 text-[var(--app-text)] rounded-lg px-1.5 py-1"
+            style={{
+              fontSize: "13px",
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              background: "var(--app-elevated)",
+              color: "var(--app-accent)",
+            }}
+          >
+            {form.emotion_decay_rate.toFixed(2)}
+          </span>
+        </div>
+      </div>
+
+      {/* Loneliness threshold */}
+      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
+        <div className="flex items-center gap-3">
+          <Heart size={18} className="text-[var(--app-muted)] shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
+              Loneliness Threshold
+            </div>
+            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+              Score that triggers proactive messaging (0–1)
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <AppSlider
+            value={form.loneliness_threshold}
+            min={0}
+            max={1}
+            step={0.01}
+            onValueChange={(v) => update("loneliness_threshold", v)}
+          />
+          <span
+            className="w-12 text-right shrink-0 text-[var(--app-text)] rounded-lg px-1.5 py-1"
+            style={{
+              fontSize: "13px",
+              fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              background: "var(--app-elevated)",
+              color: "var(--app-accent)",
+            }}
+          >
+            {form.loneliness_threshold.toFixed(2)}
+          </span>
+        </div>
+      </div>
+
+      {/* Save button */}
+      <div className="mt-3 px-1">
+        <button
+          onClick={handleSave}
+          disabled={!dirty || saving}
+          className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
+          style={{
+            background: dirty ? "var(--app-accent)" : "var(--app-elevated)",
+            color: dirty ? "#fff" : "var(--app-muted)",
+            opacity: dirty && !saving ? 1 : 0.7,
+            cursor: dirty && !saving ? "pointer" : "default",
+          }}
+        >
+          {saving ? "Saving…" : "Save Settings"}
+        </button>
+        {dirty && (
+          <p className="text-[var(--app-muted)] text-center mt-1.5" style={{ fontSize: "11px" }}>
+            Changes will take effect on the next heartbeat tick
+          </p>
+        )}
+      </div>
     </div>
   );
 }
