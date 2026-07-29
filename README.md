@@ -28,6 +28,7 @@ Chitrika will be living :)
 - **Multi-character** — run multiple personas, each with independent emotion and memory state
 - **Electron desktop app** — native window, desktop toast notifications when the character messages you, backend lifecycle management
 - **Landing page** — bilingual (zh/en) showcase with animated sections, mobile-responsive
+- **One-click Doubao import** — migrate your Doubao Agent conversation history (agentmsg-shify export) in one API call — characters, conversations, timestamps preserved
 - **Dark-themed UI** — Telegram/Messenger-style chat interface built with React 18, Radix UI, MUI, and Tailwind CSS v4
 
 ## Quick start
@@ -165,8 +166,12 @@ App entry point / lifespan   src/main.py
 | POST | `/api/desktop/notifications/{id}/ack` | Acknowledge notification shown |
 | GET | `/api/settings` | Read app settings (DB + defaults) |
 | PUT | `/api/settings` | Update app settings (partial) |
+| GET | `/api/plugins` | Discover and list local plugins |
+| POST | `/api/plugins/rescan` | Rescan the plugin directory |
+| PATCH | `/api/plugins/{id}` | Enable or disable a plugin |
 | GET | `/api/heartbeat/status` | Heartbeat engine status |
 | POST | `/api/heartbeat/tick` | Manual tick trigger |
+| POST | `/import/doubao` | Import Doubao Agent conversation history |
 
 ## Emotion system
 
@@ -186,6 +191,18 @@ Background APScheduler thread (default: every 5 minutes). Each tick re-reads int
 1. Emotion decay → 2. Memory importance decay → 3. Loneliness check → 4. Proactive message if lonely
 
 If the heartbeat interval changes in Settings, the scheduler job is rescheduled automatically — no restart. Started in the FastAPI lifespan, stopped on shutdown. Tests monkeypatch it to a no-op.
+
+## Doubao Agent import
+
+Get your Doubao Agent conversation history back under your control. Export from [agentmsg-shify](https://github.com) (the community archive tool) and import in one request:
+
+```bash
+curl -X POST http://localhost:8000/import/doubao \
+  -H "Content-Type: application/json" \
+  -d '{"source_path": "/path/to/doubao_export/"}'
+```
+
+Each Doubao bot becomes a Chitrika character. Every conversation (with original timestamps) is preserved. Already-imported conversations are skipped so you can re-run it safely.
 
 ## Default character
 
@@ -228,8 +245,9 @@ Must be known before the database is ready. Change requires a process restart.
 |-----|---------|-------------|
 | `database_url` | `sqlite:///./chitrika.db` | SQLAlchemy DB URL |
 | `cors_origins` | localhost / 127.0.0.1 dev ports | JSON array or comma-separated string |
+| `plugins_dir` | `<project>/plugins` | Trusted local plugin directory |
 
-Optional env overrides (same names, uppercase): `DATABASE_URL`, `CORS_ORIGINS`.
+Optional env overrides: `DATABASE_URL`, `CORS_ORIGINS`, `PLUGINS_DIR`.
 
 See `chitrika.json.example`. No file = defaults. No separate bootstrap GUI.
 
@@ -244,6 +262,10 @@ Stored in the `settings` table, seeded on startup, exposed as `GET/PUT /api/sett
 | `loneliness_threshold` | `0.6` | Loneliness score that triggers proactive messages |
 
 LLM provider credentials (API key, base URL, models) live under Settings → Providers.
+
+Local plugins are managed under Settings → Plugins. New plugins are disabled by
+default. See [the plugin development guide](docs/plugin-development.md) for the
+manifest format, prompt hook API, security boundary, and an example.
 
 ## Project structure
 

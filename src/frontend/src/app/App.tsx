@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PanelLeftOpen, X, Hash } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import { SettingsView } from "./components/SettingsView";
 import { LandingPage } from "./components/landing/LandingPage";
 import { Toaster } from "./components/ui/sonner";
 import type { Chat, Character } from "./services/api";
-import { fetchConversations, fetchCharacters, createConversation, markConversationRead } from "./services/api";
+import { fetchConversations, fetchCharacters, createConversation, markConversationRead, fetchPendingNotifications } from "./services/api";
 import { usePreferences } from "./preferences";
 
 type SidebarView = "chats" | "settings";
@@ -22,6 +22,7 @@ export default function App() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [messageRefreshKey, setMessageRefreshKey] = useState(0);
+  const browserSeenProactiveIds = useRef(new Set<string>());
 
   // First visit → promo concept slideshow (auto-play), then back to ?promo=1
   const needsPromo = !preferences.landingSeen && !promoMode;
@@ -89,7 +90,41 @@ export default function App() {
     // Window focused → refresh to pick up unread changes
     api.onWindowFocus(() => {
       setRefreshKey((k) => k + 1);
+      setMessageRefreshKey((k) => k + 1);
     });
+
+    api.onMessagesChanged((_conversationId: string) => {
+      setRefreshKey((k) => k + 1);
+      setMessageRefreshKey((k) => k + 1);
+    });
+  }, []);
+
+  // The browser/dev frontend has no Electron IPC channel, so poll only the
+  // lightweight pending feed and refresh when heartbeat-created messages land.
+  useEffect(() => {
+    if (window.desktopAPI) return;
+    let cancelled = false;
+    const poll = async () => {
+      const pending = await fetchPendingNotifications().catch(() => []);
+      if (cancelled) return;
+      let foundNew = false;
+      for (const item of pending) {
+        if (!item.is_proactive || browserSeenProactiveIds.current.has(item.message_id)) continue;
+        browserSeenProactiveIds.current.add(item.message_id);
+        foundNew = true;
+      }
+      if (foundNew) {
+        setRefreshKey((key) => key + 1);
+        setMessageRefreshKey((key) => key + 1);
+      }
+    };
+    const initial = window.setTimeout(poll, 3_000);
+    const timer = window.setInterval(poll, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
   }, []);
 
   // Mark conversation read when active chat changes

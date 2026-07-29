@@ -72,6 +72,13 @@ function startToastWorker() {
         const msg = JSON.parse(line);
         if (msg.type === "shown" && msg.message_id) {
           ackNotification(msg.message_id);
+        } else if (msg.type === "clicked" && msg.conversation_id) {
+          ackNotification(msg.message_id);
+          if (mainWindow) {
+            mainWindow.webContents.send("notification-click", msg.conversation_id);
+            mainWindow.show();
+            mainWindow.focus();
+          }
         }
       } catch { /* skip malformed lines */ }
     }
@@ -89,7 +96,7 @@ function startToastWorker() {
   });
 }
 
-function sendToast(title, content, messageId) {
+function sendToast(title, content, messageId, conversationId) {
   if (!toastWorker || toastWorker.killed) return;
 
   const request = JSON.stringify({
@@ -97,6 +104,7 @@ function sendToast(title, content, messageId) {
     title,
     content,
     message_id: messageId,
+    conversation_id: conversationId,
   }) + "\n";
 
   toastWorker.stdin.write(request);
@@ -132,6 +140,11 @@ async function pollNotifications() {
 
       notifiedMessageIds.add(item.message_id);
 
+      // Keep an open renderer in sync with messages created by the heartbeat.
+      if (item.is_proactive && mainWindow) {
+        mainWindow.webContents.send("messages-changed", item.conversation_id);
+      }
+
       // Only show if window is not focused
       if (mainWindow && mainWindow.isFocused()) {
         ackNotification(item.message_id);
@@ -142,7 +155,7 @@ async function pollNotifications() {
         ? item.content_preview.slice(0, 100) + "..."
         : item.content_preview;
 
-      sendToast("Chitrika", content, item.message_id);
+      sendToast("Chitrika", content, item.message_id, item.conversation_id);
     }
   } catch {
     // Backend may not be up yet — retry next poll

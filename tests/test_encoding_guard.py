@@ -28,6 +28,8 @@ SKIP_PARTS = {
     "__pycache__",
     "node_modules",
     "dist",
+    "models",
+    "MEC",
 }
 
 MOJIBAKE_MARKERS = (
@@ -44,7 +46,7 @@ MOJIBAKE_MARKERS = (
     "\u704f\u5fd4\u6902",
     "\u6fa7\u255e\u588d",
     "\u6d93\u3c81\u6e80",
-    "\u7ec3",
+    # Do not use single common Han characters as markers (e.g. 练 in 教练).
     "\u92910",
     "\u951b",
 )

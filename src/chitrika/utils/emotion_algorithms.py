@@ -54,7 +54,10 @@ def apply_decay(
 # ---------------------------------------------------------------------------
 
 
-def compute_loneliness(emotions: dict[str, float]) -> float:
+def compute_loneliness(
+    emotions: dict[str, float],
+    hours_since_interaction: float | None = None,
+) -> float:
     """Compute a loneliness score [0, 1] from the current emotion state.
 
     Weights:
@@ -71,6 +74,12 @@ def compute_loneliness(emotions: dict[str, float]) -> float:
         + max(0.0, emotions.get("anticipation", 0.0)) * 0.2
         + max(0.0, 1.0 - emotions.get("joy", 0.0)) * 0.2
     )
+    # Absence should matter even when the emotional vector is neutral.  The
+    # first eight hours add nothing; afterwards the pressure grows gradually
+    # and caps at +0.45 so a recent positive bond still resists loneliness.
+    if hours_since_interaction is not None:
+        absence_hours = max(0.0, hours_since_interaction - 8.0)
+        score += min(0.45, absence_hours / 72.0 * 0.45)
     return clamp(score, 0.0, 1.0)
 
 

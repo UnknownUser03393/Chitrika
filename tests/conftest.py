@@ -19,7 +19,9 @@ import src.chitrika.models.emotion  # noqa: F401, E402
 import src.chitrika.models.heartbeat  # noqa: F401, E402
 import src.chitrika.models.memory  # noqa: F401, E402
 import src.chitrika.models.message  # noqa: F401, E402
+import src.chitrika.models.plugin  # noqa: F401, E402
 import src.chitrika.models.provider  # noqa: F401, E402
+import src.chitrika.models.relationship  # noqa: F401, E402
 import src.chitrika.models.settings  # noqa: F401, E402
 
 
@@ -71,6 +73,7 @@ def session(test_engine) -> Generator[Session, None, None]:
 def _patch_app(monkeypatch):
     """Force in-memory SQLite and disable heartbeat during tests."""
     monkeypatch.setattr(config, "database_url", "sqlite:///:memory:")
+    monkeypatch.setattr(config, "emotion_debug_panel", False)
 
     # Prevent the heartbeat engine from actually starting its scheduler
     def _noop_start(self):

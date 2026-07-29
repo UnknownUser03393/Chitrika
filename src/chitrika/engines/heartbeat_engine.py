@@ -229,10 +229,36 @@ class HeartbeatEngine:
         from src.chitrika.utils.emotion_algorithms import compute_loneliness
 
         emotions = state.to_dict()
-        loneliness = compute_loneliness(emotions)
+        last_user_message = session.exec(
+            select(Message)
+            .join(Conversation)
+            .where(
+                Conversation.character_id == character.id,
+                Message.role == "user",
+                Message.is_deleted.is_(False),
+            )
+            .order_by(Message.created_at.desc())
+        ).first()
+        last_interaction_at = (
+            last_user_message.created_at
+            if last_user_message is not None
+            else character.created_at
+        )
+        hours_since_interaction = max(
+            0.0, hours_between(utcnow(), last_interaction_at)
+        )
+        loneliness = compute_loneliness(emotions, hours_since_interaction)
 
-        # 4. Proactive messaging
-        if loneliness >= self.LONELINESS_THRESHOLD:
+        # 4. Proactive messaging — skip when the user is actively chatting.
+        #    The loneliness formula can drift above threshold purely from
+        #    anticipation / low-joy even with zero idle time, but a companion
+        #    shouldn't act lonely while the user is right there talking.
+        _PROACTIVE_COOLDOWN_MINUTES = 30
+        minutes_since_interaction = hours_since_interaction * 60.0
+        if (
+            loneliness >= self.LONELINESS_THRESHOLD
+            and minutes_since_interaction >= _PROACTIVE_COOLDOWN_MINUTES
+        ):
             self._initiate_proactive(session, character, state, loneliness)
 
     # ------------------------------------------------------------------
@@ -264,6 +290,20 @@ class HeartbeatEngine:
             logger.debug("Character %s already has a pending scheduled message", character.id)
             return
 
+        # A lonely state persists after sending.  Without a cooldown every
+        # heartbeat tick could schedule another message before the user has a
+        # chance to respond.
+        recent_sent = session.exec(
+            select(ScheduledMessage).where(
+                ScheduledMessage.character_id == character.id,
+                ScheduledMessage.status == ScheduledMessageStatus.SENT.value,
+                ScheduledMessage.scheduled_at >= utcnow() - timedelta(hours=12),
+            )
+        ).first()
+        if recent_sent is not None:
+            logger.debug("Character %s is inside proactive cooldown", character.id)
+            return
+
         # Find or create a conversation for this character
         conv = session.exec(
             select(Conversation).where(
@@ -280,14 +320,16 @@ class HeartbeatEngine:
         # Calculate hours since last interaction
         last_msg = session.exec(
             select(Message)
+            .join(Conversation)
             .where(
-                Message.conversation_id == conv.id,
+                Conversation.character_id == character.id,
+                Message.role == "user",
                 Message.is_deleted.is_(False),
             )
             .order_by(Message.created_at.desc())
         ).first()
 
-        hours_since_last = 0.0
+        hours_since_last = hours_between(utcnow(), character.created_at)
         if last_msg is not None:
             hours_since_last = hours_between(utcnow(), last_msg.created_at)
 
@@ -308,6 +350,22 @@ class HeartbeatEngine:
         )
         if llm_decision is not None:
             decision = llm_decision
+
+        action = decision.get("action")
+        if action not in {"now", "wait", "cancel"}:
+            logger.warning("Ignoring invalid proactive action %r", action)
+            decision = {"action": "cancel"}
+
+        if decision.get("action") in {"now", "wait"}:
+            try:
+                wait_minutes = int(decision.get("wait_minutes", 0))
+            except (TypeError, ValueError):
+                wait_minutes = 0
+            decision["wait_minutes"] = max(0, min(wait_minutes, 24 * 60))
+            content = str(decision.get("message_content") or "").strip()
+            decision["message_content"] = content or self._fallback_message(
+                character, emotion_state, hours_since_last
+            )
 
         logger.info(
             "Proactive decision for %s: action=%s loneliness=%.2f",
@@ -350,6 +408,27 @@ class HeartbeatEngine:
                 "loneliness": loneliness,
             },
         )
+
+    @staticmethod
+    def _fallback_message(
+        character: Character,
+        emotion_state: EmotionState,
+        hours_since_last: float,
+    ) -> str:
+        """Create a usable proactive message when no LLM is configured.
+
+        The heartbeat must remain functional in local/offline mode.  These
+        are intentionally short and casual — they don't pretend to know
+        what the conversation was about.
+        """
+        emotions = emotion_state.to_dict()
+        if emotions.get("sadness", 0.0) >= 0.45:
+            return "在吗。。。有点想你"
+        if emotions.get("anticipation", 0.0) >= 0.45:
+            return "喂"
+        if hours_since_last >= 24:
+            return "还活着吗"
+        return "嗯？"
 
     def _deliver_due_messages(self, session: Session) -> None:
         """Convert due ScheduledMessage rows into actual assistant Message rows.
@@ -430,9 +509,27 @@ class HeartbeatEngine:
             from src.llmproviders.LLMProvider import Model as LLMModel
             from src.chitrika.services.prompt_service import PromptService
 
+            # Pull the last few messages so the LLM can write a natural,
+            # context-aware proactive message instead of a generic template.
+            recent = session.exec(
+                select(Message)
+                .join(Conversation)
+                .where(
+                    Conversation.character_id == character.id,
+                    Message.is_deleted.is_(False),
+                )
+                .order_by(Message.created_at.desc())
+                .limit(6)
+            ).all()
+            recent_lines = [
+                f"{'用户' if m.role == 'user' else character.display_name}: {m.content}"
+                for m in reversed(recent)
+            ]
+
             prompt_service = PromptService()
             prompt = prompt_service.build_proactive_prompt(
-                character, emotion_state, hours_since_last
+                character, emotion_state, hours_since_last,
+                recent_messages=recent_lines if recent_lines else None,
             )
 
             model_name = provider.default_model or "deepseek-chat"

@@ -9,6 +9,7 @@ Protocol (stdin → worker):
 
 Protocol (worker → stdout):
     {"type": "shown", "message_id": "..."}
+    {"type": "clicked", "message_id": "...", "conversation_id": "..."}
     {"type": "error", "message_id": "...", "error": "..."}
     {"type": "ready"}
 """
@@ -60,6 +61,7 @@ def main() -> None:
             message_id = request.get("message_id", "")
             title = request.get("title", "Chitrika")
             content = request.get("content", "")
+            conversation_id = request.get("conversation_id", "")
 
             try:
                 showNotify(
@@ -69,6 +71,14 @@ def main() -> None:
                     duration=DurationShort,
                     ttl=10,
                     silent=False,
+                    onClick=lambda _event: print(
+                        json.dumps({
+                            "type": "clicked",
+                            "message_id": message_id,
+                            "conversation_id": conversation_id,
+                        }),
+                        flush=True,
+                    ),
                 )
                 print(json.dumps({"type": "shown", "message_id": message_id}), flush=True)
             except Exception as exc:

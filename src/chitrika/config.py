@@ -53,6 +53,18 @@ def _normalize_cors(value: object) -> str:
     return ",".join(DEFAULT_CORS_ORIGINS)
 
 
+def _as_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
 def _load_json_file(path: Path) -> dict[str, object]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -91,6 +103,30 @@ class ChitrikaConfig:
             self.cors_origins = _normalize_cors(file_data["cors_origins"])
         else:
             self.cors_origins = ",".join(DEFAULT_CORS_ORIGINS)
+
+        env_plugins = os.environ.get("PLUGINS_DIR", "").strip()
+        file_plugins = file_data.get("plugins_dir")
+        if env_plugins:
+            self.plugins_dir = str(Path(env_plugins).expanduser().resolve())
+        elif isinstance(file_plugins, str) and file_plugins.strip():
+            self.plugins_dir = str(Path(file_plugins).expanduser().resolve())
+        else:
+            self.plugins_dir = str((_project_root() / "plugins").resolve())
+
+        env_emotion_model = os.environ.get("EMOTION_CLASSIFIER_MODEL_DIR", "").strip()
+        file_emotion_model = file_data.get("emotion_classifier_model_dir")
+        if env_emotion_model:
+            self.emotion_classifier_model_dir = str(Path(env_emotion_model).expanduser().resolve())
+        elif isinstance(file_emotion_model, str) and file_emotion_model.strip():
+            self.emotion_classifier_model_dir = str(Path(file_emotion_model).expanduser().resolve())
+        else:
+            self.emotion_classifier_model_dir = str((_project_root() / "models" / "emotion").resolve())
+
+        env_debug_panel = os.environ.get("EMOTION_DEBUG_PANEL", "").strip()
+        if env_debug_panel:
+            self.emotion_debug_panel = _as_bool(env_debug_panel)
+        else:
+            self.emotion_debug_panel = _as_bool(file_data.get("emotion_debug_panel"), False)
 
     @property
     def cors_origin_list(self) -> list[str]:

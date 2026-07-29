@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class MemoryCreate(BaseModel):
     """Request body for creating a memory manually."""
 
-    memory_type: str = Field(
+    memory_type: Literal["short_term", "long_term", "episodic"] = Field(
         default="long_term",
         description="One of: 'short_term', 'long_term', 'episodic'",
     )

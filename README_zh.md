@@ -24,6 +24,7 @@ Chitrika 会活下去 :)
 - **多角色** — 同时运行多个角色，每个拥有独立的情感状态和记忆存储
 - **Electron 桌面应用** — 原生窗口、角色发消息时的桌面 Toast 通知、后端生命周期管理
 - **落地页** — 中英双语展示页，带动画段落，移动端适配
+- **一键导入豆包 Agent 对话** — 通过 agentmsg-shify 导出后，一个 API 调用即可迁移豆包 Agent 的完整对话历史（角色、会话、时间戳全部保留）
 - **暗色主题 UI** — Telegram/Messenger 风格聊天界面，基于 React 18、Radix UI、MUI 和 Tailwind CSS v4 构建
 
 ## 快速开始
@@ -161,8 +162,12 @@ Schemas（Pydantic DTO）       src/chitrika/schemas/
 | POST | `/api/desktop/notifications/{id}/ack` | 确认通知已展示 |
 | GET | `/api/settings` | 读取应用设置（数据库 + 默认值） |
 | PUT | `/api/settings` | 更新应用设置（支持部分字段） |
+| GET | `/api/plugins` | 扫描并列出本地插件 |
+| POST | `/api/plugins/rescan` | 重新扫描插件目录 |
+| PATCH | `/api/plugins/{id}` | 启用或禁用插件 |
 | GET | `/api/heartbeat/status` | 心跳引擎状态 |
 | POST | `/api/heartbeat/tick` | 手动触发一次 tick |
+| POST | `/import/doubao` | 导入豆包 Agent 对话历史 |
 
 ## 情感系统
 
@@ -182,6 +187,18 @@ Schemas（Pydantic DTO）       src/chitrika/schemas/
 1. 情感衰减 → 2. 记忆重要性衰减 → 3. 孤独感检测 → 4. 若满足阈值则发送主动消息
 
 在设置中修改心跳间隔后，调度任务会自动 reschedule，无需重启。在 FastAPI lifespan 中启动，shutdown 时停止。测试中将其 monkeypatch 为空操作。
+
+## 豆包 Agent 对话导入
+
+把豆包 Agent 的对话历史拿回自己手里。用 [agentmsg-shify](https://github.com)（社区存档工具）导出后，一行命令完成导入：
+
+```bash
+curl -X POST http://localhost:8000/import/doubao \
+  -H "Content-Type: application/json" \
+  -d '{"source_path": "/path/to/doubao_export/"}'
+```
+
+每个豆包 bot 变成一个 Chitrika 角色。所有会话（含原始时间戳）完整保留。已导入的会话自动跳过，重复执行不会重复导入。
 
 ## 默认角色
 
@@ -224,8 +241,9 @@ uv pip install -e ".[dev]"
 |----|--------|------|
 | `database_url` | `sqlite:///./chitrika.db` | SQLAlchemy 数据库 URL |
 | `cors_origins` | 本地开发用的 localhost / 127.0.0.1 端口 | JSON 数组或逗号分隔字符串 |
+| `plugins_dir` | `<项目目录>/plugins` | 可信本地插件目录 |
 
-可选环境变量覆盖（大写同名）：`DATABASE_URL`、`CORS_ORIGINS`。
+可选环境变量覆盖：`DATABASE_URL`、`CORS_ORIGINS`、`PLUGINS_DIR`。
 
 见 `chitrika.json.example`。没有配置文件 = 用默认值。不做独立的 Bootstrap GUI。
 
@@ -240,6 +258,9 @@ uv pip install -e ".[dev]"
 | `loneliness_threshold` | `0.6` | 触发主动消息的孤独感阈值 |
 
 LLM 厂商凭证在 设置 → Providers 中配置。
+
+本地插件在 设置 → Plugins 中管理，新发现的插件默认禁用。manifest、提示词
+钩子、安全边界和示例见[插件开发指南](docs/plugin-development.md)。
 
 ## 项目结构
 

@@ -21,10 +21,15 @@ from sqlmodel import Session, col, select
 
 from src.chitrika.engines.emotion_engine import EmotionEngine
 from src.chitrika.engines.memory_engine import MemoryEngine
+from src.chitrika.engines.plugin_engine import PluginEngine
+from src.chitrika.engines.relationship_engine import RelationshipEngine
 from src.chitrika.models.character import Character
 from src.chitrika.models.conversation import Conversation
+from src.chitrika.models.heartbeat import ScheduledMessage
+from src.chitrika.models.memory import Memory
 from src.chitrika.models.message import Message
 from src.chitrika.services.prompt_service import PromptService
+from src.chitrika.plugins.api import PromptContext
 from src.chitrika.utils import sse
 from src.chitrika.utils.datetime_helpers import utcnow
 
@@ -40,6 +45,7 @@ class ChatEngine:
         self._model_name = model_name
         self._emotion = EmotionEngine(session)
         self._memory = MemoryEngine(session)
+        self._relationship = RelationshipEngine(session)
         self._prompt = PromptService()
 
     # ------------------------------------------------------------------
@@ -168,38 +174,82 @@ class ChatEngine:
 
     def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation and all its messages."""
-        conv = self.get_conversation(conversation_id)
-        if conv is None:
-            raise ValueError(f"Conversation '{conversation_id}' not found")
+        affected, missing_ids = self.delete_conversations([conversation_id])
+        if affected == 0:
+            raise ValueError(f"Conversation '{missing_ids[0]}' not found")
 
-        # Delete all messages
-        messages = self._session.exec(
-            select(Message).where(Message.conversation_id == conversation_id)
+    def delete_conversations(self, conversation_ids: list[str]) -> tuple[int, list[str]]:
+        """Delete multiple conversations and all dependent rows."""
+        unique_ids = list(dict.fromkeys(conversation_ids))
+        if not unique_ids:
+            return 0, []
+
+        conversations = self._session.exec(
+            select(Conversation).where(Conversation.id.in_(unique_ids))
         ).all()
+        found_ids = {conv.id for conv in conversations}
+        missing_ids = [conversation_id for conversation_id in unique_ids if conversation_id not in found_ids]
+
+        messages = self._session.exec(
+            select(Message).where(Message.conversation_id.in_(found_ids))
+        ).all()
+        message_ids = [msg.id for msg in messages]
+        if message_ids:
+            memories = self._session.exec(
+                select(Memory).where(Memory.source_message_id.in_(message_ids))
+            ).all()
+            for memory in memories:
+                memory.source_message_id = None
+
         for msg in messages:
             self._session.delete(msg)
 
-        self._session.delete(conv)
+        scheduled_messages = self._session.exec(
+            select(ScheduledMessage).where(ScheduledMessage.conversation_id.in_(found_ids))
+        ).all()
+        for scheduled_msg in scheduled_messages:
+            self._session.delete(scheduled_msg)
+
+        for conv in conversations:
+            self._session.delete(conv)
+
         self._session.commit()
+        return len(conversations), missing_ids
 
     def clear_conversation_messages(self, conversation_id: str) -> None:
         """Soft-delete all messages in a conversation without deleting it."""
-        conv = self.get_conversation(conversation_id)
-        if conv is None:
-            raise ValueError(f"Conversation '{conversation_id}' not found")
+        affected, missing_ids = self.clear_conversations_messages([conversation_id])
+        if affected == 0:
+            raise ValueError(f"Conversation '{missing_ids[0]}' not found")
+
+    def clear_conversations_messages(self, conversation_ids: list[str]) -> tuple[int, list[str]]:
+        """Soft-delete all messages in multiple conversations without deleting them."""
+        unique_ids = list(dict.fromkeys(conversation_ids))
+        if not unique_ids:
+            return 0, []
+
+        conversations = self._session.exec(
+            select(Conversation).where(Conversation.id.in_(unique_ids))
+        ).all()
+        found_ids = {conv.id for conv in conversations}
+        missing_ids = [conversation_id for conversation_id in unique_ids if conversation_id not in found_ids]
 
         messages = self._session.exec(
             select(Message).where(
-                Message.conversation_id == conversation_id,
+                Message.conversation_id.in_(found_ids),
                 Message.is_deleted.is_(False),
             )
         ).all()
         for msg in messages:
             msg.is_deleted = True
 
-        conv.last_message_at = None
-        conv.updated_at = utcnow()
+        now = utcnow()
+        for conv in conversations:
+            conv.last_message_at = None
+            conv.updated_at = now
+
         self._session.commit()
+        return len(conversations), missing_ids
 
     def mark_conversation_read(self, conversation_id: str) -> int:
         """Mark all unread assistant messages in a conversation as read.
@@ -253,6 +303,7 @@ class ChatEngine:
                 "conversation_id": msg.conversation_id,
                 "character_id": conv.character_id if conv else None,
                 "content_preview": msg.content[:120],
+                "is_proactive": msg.scheduled_message_id is not None,
                 "created_at": msg.created_at.isoformat() if msg.created_at else None,
             })
 
@@ -413,15 +464,34 @@ class ChatEngine:
             # Apply decay before generating
             self._emotion.apply_decay(character.id)
 
-            memories = self._memory.get_relevant(character.id, limit=10)
+            memories = self._memory.get_relevant(
+                character.id, limit=10, track_access=True
+            )
+            relationship_state = self._relationship.get_or_create(character.id)
             history = self.get_messages(conversation_id, limit=30)
 
             # 5. Build prompt
+            system_prompt = self._prompt.build_system_prompt(
+                character=character,
+                emotion_state=emotion_state,
+                memories=memories,
+                relationship_state=relationship_state,
+            )
+            system_prompt = PluginEngine(self._session).apply_system_prompt(
+                PromptContext(
+                    character_id=character.id,
+                    conversation_id=conversation_id,
+                    user_content=user_content,
+                    system_prompt=system_prompt,
+                )
+            )
             llm_messages = self._prompt.build_messages(
                 character=character,
                 emotion_state=emotion_state,
                 memories=memories,
                 recent_messages=history,
+                system_prompt_override=system_prompt,
+                relationship_state=relationship_state,
             )
         except Exception:
             logger.exception("Failed to build prompt")
@@ -437,7 +507,7 @@ class ChatEngine:
         error_occurred = False
 
         try:
-            yield sse.sse_start(assistant_msg_id)
+            yield sse.sse_start(assistant_msg_id, user_message_id=user_msg.id)
 
             if self._llm is None:
                 # --- No LLM provider: return echo for testing ---
@@ -503,6 +573,12 @@ class ChatEngine:
         except Exception:
             logger.exception("Post-process memory extraction failed")
 
+        # 10. Post-processing: advance the long-lived relationship state
+        try:
+            self._relationship.record_interaction(character.id, user_content)
+        except Exception:
+            logger.exception("Post-process relationship update failed")
+
     # ------------------------------------------------------------------
     # Post-processing helpers
     # ------------------------------------------------------------------
@@ -513,88 +589,13 @@ class ChatEngine:
         user_text: str,
         assistant_text: str,
     ) -> None:
-        """Apply emotion deltas based on the interaction content.
+        """Apply ONNX emotion deltas, falling back to the lightweight local classifier."""
+        from src.chitrika.utils.emotion_nlp import classify_emotion_delta
+        from src.chitrika.utils.emotion_onnx import classify_with_onnx_if_available
 
-        Keyword and shape-based heuristics for MVP.
-        Future: use a lightweight classifier or LLM call.
-        """
-        deltas: dict[str, float] = {}
-        text = user_text.lower()
-
-        def add(dim: str, amount: float) -> None:
-            deltas[dim] = deltas.get(dim, 0.0) + amount
-
-        def hit(words: list[str]) -> bool:
-            return any(word.lower() in text for word in words)
-
-        if hit(["谢谢", "感谢", "辛苦", "thank", "thanks"]):
-            add("joy", 0.04)
-            add("trust", 0.06)
-
-        if hit(["爱你", "喜欢你", "想你", "抱抱", "亲亲", "love you", "miss you"]):
-            add("joy", 0.08)
-            add("trust", 0.08)
-            add("anticipation", 0.03)
-
-        if hit(["哈哈", "hhh", "笑死", "开心", "高兴", "好棒", "厉害", "great", "nice"]):
-            add("joy", 0.06)
-            add("surprise", 0.02)
-
-        if hit(["对不起", "抱歉", "不好意思", "sorry"]):
-            add("sadness", 0.03)
-            add("trust", 0.04)
-            add("anger", -0.03)
-
-        if hit(["讨厌", "烦", "傻逼", "热", "生气", "闭嘴", "bad", "hate", "stupid"]):
-            add("anger", 0.10)
-            add("trust", -0.06)
-            add("disgust", 0.04)
-
-        if hit(["恶心", "反胃", "嫌弃", "离谱", "disgusting", "gross"]):
-            add("disgust", 0.10)
-            add("trust", -0.03)
-
-        if hit(["难过", "伤心", "委屈", "哭", "累了", "崩溃", "sad", "cry"]):
-            add("sadness", 0.09)
-            add("trust", 0.02)
-
-        if hit(["孤独", "寂寞", "没人理", "lonely", "alone"]):
-            add("sadness", 0.08)
-            add("anticipation", 0.05)
-            add("trust", -0.03)
-
-        if hit(["担心", "害怕", "怕", "紧张", "焦虑", "不安", "anxious", "afraid"]):
-            add("fear", 0.08)
-            add("anticipation", 0.04)
-
-        if hit(["期待", "等你", "想知道", "下次", "以后", "期待你", "hope"]):
-            add("anticipation", 0.07)
-            add("trust", 0.02)
-
-        if hit(["我靠", "我去", "天哪", "居然", "竟然", "wow", "omg", "卧槽"]):
-            add("surprise", 0.10)
-
-        if "？" in user_text or "?" in user_text:
-            add("anticipation", 0.02)
-        if "！" in user_text or "!" in user_text:
-            add("surprise", 0.02)
-
-        # Long user message means the user is engaged.
-        if len(user_text) > 100:
-            add("joy", 0.03)
-            add("anticipation", 0.05)
-            add("trust", 0.02)
-        # Very short user message gets a slight engagement dip.
-        elif len(user_text) < 5:
-            add("anticipation", -0.02)
-
-        if assistant_text:
-            assistant_lower = assistant_text.lower()
-            if any(word in assistant_lower for word in ["对不起", "抱歉", "sorry"]):
-                add("sadness", 0.02)
-                add("trust", 0.02)
-            if any(word in assistant_lower for word in ["开心", "喜欢", "谢谢", "happy"]):
-                add("joy", 0.02)
+        deltas = classify_with_onnx_if_available(user_text, assistant_text)
+        if deltas is None:
+            deltas = classify_emotion_delta(user_text, assistant_text)
 
         if deltas:
             self._emotion.update_emotion(character_id, deltas)
@@ -606,11 +607,11 @@ class ChatEngine:
         assistant_text: str,
         source_message_id: str,
     ) -> None:
-        """Extract potential memories from the interaction.
+        """Extract short-term context and durable user facts.
 
-        Simple heuristics for MVP:
-        - User messages with declarative patterns ("我喜欢...", "我有...", etc.)
-        - Store as short-term memory with moderate importance.
+        This deliberately uses conservative patterns: a missed fact is less
+        damaging than confidently remembering something the user never said.
+        Repeated durable facts are reinforced by ``MemoryEngine.store``.
         """
         # Store user message as short-term memory
         if len(user_text) > 5:
@@ -641,6 +642,36 @@ class ChatEngine:
                 emotional_valence=max(-1.0, min(1.0, emotional_valence)),
                 source_message_id=source_message_id,
             )
+
+        # Promote explicit self-disclosures into durable, compact facts.  Keep
+        # this local and deterministic so memory still works without an LLM.
+        import re
+
+        fact_patterns = [
+            (r"(?:我叫|我的名字是)\s*([^，。！？,.!?\n]{1,30})", "用户的名字是{0}"),
+            (r"我(?:很|最|也)?喜欢\s*([^，。！？,.!?\n]{1,50})", "用户喜欢{0}"),
+            (r"我(?:不喜欢|讨厌)\s*([^，。！？,.!?\n]{1,50})", "用户不喜欢{0}"),
+            (r"我住在\s*([^，。！？,.!?\n]{1,50})", "用户住在{0}"),
+            (r"我的生日是\s*([^，。！？,.!?\n]{1,30})", "用户的生日是{0}"),
+            (r"我在\s*([^，。！？,.!?\n]{1,40})\s*(?:工作|上班)", "用户在{0}工作"),
+            (r"\bmy name is\s+([^,.!?\n]{1,30})", "The user's name is {0}"),
+            (r"\bi (?:really )?(?:like|love)\s+([^,.!?\n]{1,50})", "The user likes {0}"),
+            (r"\bi (?:dislike|hate)\s+([^,.!?\n]{1,50})", "The user dislikes {0}"),
+            (r"\bi live in\s+([^,.!?\n]{1,50})", "The user lives in {0}"),
+        ]
+        for pattern, template in fact_patterns:
+            for match in re.finditer(pattern, user_text, flags=re.IGNORECASE):
+                value = match.group(1).strip(" 的了呢啊呀 ")
+                if not value:
+                    continue
+                self._memory.store(
+                    character_id=character_id,
+                    memory_type="long_term",
+                    content=template.format(value),
+                    importance=0.65,
+                    emotional_valence=None,
+                    source_message_id=source_message_id,
+                )
 
 
 # ---------------------------------------------------------------------------

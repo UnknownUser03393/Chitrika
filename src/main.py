@@ -40,6 +40,23 @@ async def lifespan(_app: FastAPI) -> Any:  # noqa: RUF029
     create_db_and_tables()
     logger.info("Database tables ready")
 
+    # Discover local plugins. New plugins remain disabled until explicitly
+    # enabled through the management API.
+    try:
+        from src.chitrika.database import get_session as _plugin_session
+        from src.chitrika.engines.plugin_engine import PluginEngine
+
+        session = next(_plugin_session())
+        try:
+            discovered, invalid = PluginEngine(session).discover()
+            logger.info("Discovered %d local plugins", len(discovered))
+            for error in invalid:
+                logger.warning("Plugin discovery error: %s", error)
+        finally:
+            session.close()
+    except Exception:
+        logger.exception("Failed to discover plugins - continuing")
+
     # Seed default settings rows (no-op if they already exist)
     from src.chitrika.database import get_session
     from src.chitrika.engines.settings_engine import SettingsEngine
@@ -98,6 +115,16 @@ async def lifespan(_app: FastAPI) -> Any:  # noqa: RUF029
     except Exception:
         logger.exception("Failed to seed default provider — continuing")
 
+    # Start optional local emotion inference debug panel.
+    if config.emotion_debug_panel:
+        try:
+            from src.chitrika.services.emotion_debug_panel import start_emotion_debug_panel
+
+            start_emotion_debug_panel()
+            logger.info("Emotion debug panel started")
+        except Exception:
+            logger.exception("Failed to start emotion debug panel — continuing")
+
     # Start heartbeat engine
     try:
         from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
@@ -120,6 +147,14 @@ async def lifespan(_app: FastAPI) -> Any:  # noqa: RUF029
             logger.info("Heartbeat engine stopped")
         except Exception:
             logger.exception("Error stopping heartbeat engine")
+
+    if config.emotion_debug_panel:
+        try:
+            from src.chitrika.services.emotion_debug_panel import stop_emotion_debug_panel
+
+            stop_emotion_debug_panel()
+        except Exception:
+            logger.exception("Error stopping emotion debug panel")
 
 
 # ---------------------------------------------------------------------------
@@ -162,22 +197,28 @@ def health_check() -> dict[str, str]:
 def _register_routers() -> None:
     from src.chitrika.routes.chat_routes import router as chat_router
     from src.chitrika.routes.character_routes import router as character_router
+    from src.chitrika.routes.debug_routes import router as debug_router
     from src.chitrika.routes.desktop_routes import router as desktop_router
     from src.chitrika.routes.emotion_routes import router as emotion_router
     from src.chitrika.routes.heartbeat_routes import router as heartbeat_router
     from src.chitrika.routes.import_routes import router as import_router
     from src.chitrika.routes.memory_routes import router as memory_router
+    from src.chitrika.routes.plugin_routes import router as plugin_router
     from src.chitrika.routes.provider_routes import router as provider_router
+    from src.chitrika.routes.relationship_routes import router as relationship_router
     from src.chitrika.routes.settings_routes import router as settings_router
 
     app.include_router(chat_router, prefix="/api")
     app.include_router(character_router, prefix="/api")
+    app.include_router(debug_router, prefix="/api")
     app.include_router(desktop_router, prefix="/api")
     app.include_router(emotion_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")
+    app.include_router(plugin_router, prefix="/api")
     app.include_router(heartbeat_router, prefix="/api")
     app.include_router(import_router, prefix="/api")
     app.include_router(provider_router, prefix="/api")
+    app.include_router(relationship_router, prefix="/api")
     app.include_router(settings_router, prefix="/api")
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +29,18 @@ class MessageEdit(BaseModel):
     """Request body for editing a message."""
 
     content: str = Field(..., min_length=1)
+
+
+class ConversationBatchRequest(BaseModel):
+    """Request body for batch conversation operations."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ids: list[str] = Field(
+        ...,
+        min_length=1,
+        validation_alias=AliasChoices("ids", "conversation_ids"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +90,14 @@ class ConversationDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_message_at: datetime | None
+
+
+class ConversationBatchResponse(BaseModel):
+    """Result for batch conversation operations."""
+
+    requested: int
+    affected: int
+    missing_ids: list[str] = Field(default_factory=list)
 
 
 class MessageListResponse(BaseModel):

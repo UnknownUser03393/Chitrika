@@ -55,6 +55,34 @@ class MemoryEngine:
         If *importance* is None it is computed automatically from
         *emotional_valence* and *is_pinned*.
         """
+        content = content.strip()
+        if not content:
+            raise ValueError("Memory content cannot be empty")
+
+        # Facts extracted repeatedly from normal conversation should reinforce a
+        # memory instead of filling the database with identical rows.
+        if memory_type in {"long_term", "episodic"}:
+            existing = self._session.exec(
+                select(Memory).where(
+                    Memory.character_id == character_id,
+                    Memory.memory_type == memory_type,
+                    Memory.content == content,
+                )
+            ).first()
+            if existing is not None:
+                existing.is_forgotten = False
+                existing.last_accessed = utcnow()
+                existing.access_count += 1
+                existing.importance = min(
+                    1.0,
+                    max(existing.importance, importance or 0.0) + 0.05,
+                )
+                if is_pinned:
+                    existing.is_pinned = True
+                self._session.commit()
+                self._session.refresh(existing)
+                return existing
+
         if importance is None:
             importance = self._compute_importance(
                 emotional_valence=emotional_valence,
@@ -92,6 +120,7 @@ class MemoryEngine:
         limit: int = 10,
         min_importance: float = 0.0,
         include_forgotten: bool = False,
+        track_access: bool = False,
     ) -> list[Memory]:
         """Return the most important active memories for *character_id*.
 
@@ -109,7 +138,14 @@ class MemoryEngine:
         stmt = stmt.order_by(col(Memory.importance).desc(), col(Memory.last_accessed).desc())
         stmt = stmt.limit(limit)
 
-        return list(self._session.exec(stmt).all())
+        memories = list(self._session.exec(stmt).all())
+        if track_access and memories:
+            now = utcnow()
+            for memory in memories:
+                memory.access_count += 1
+                memory.last_accessed = now
+            self._session.commit()
+        return memories
 
     def get_by_id(self, memory_id: str) -> Memory | None:
         """Fetch a single memory by ID."""

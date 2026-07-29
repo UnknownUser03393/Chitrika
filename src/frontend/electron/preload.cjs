@@ -21,6 +21,13 @@ contextBridge.exposeInMainWorld("desktopAPI", {
     ipcRenderer.on("window-focus", () => callback());
   },
 
+  /** Listen for messages created outside the active renderer chat stream. */
+  onMessagesChanged: (callback) => {
+    ipcRenderer.on("messages-changed", (_event, conversationId) => {
+      callback(conversationId);
+    });
+  },
+
   /** Sync notification preference to main process. */
   setNotificationsEnabled: (enabled) => {
     ipcRenderer.send("set-notifications-enabled", enabled);

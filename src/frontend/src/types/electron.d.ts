@@ -4,6 +4,7 @@ export interface DesktopAPI {
   getApiBase(): string;
   onNotificationClick(callback: (conversationId: string) => void): void;
   onWindowFocus(callback: () => void): void;
+  onMessagesChanged(callback: (conversationId: string) => void): void;
   setNotificationsEnabled(enabled: boolean): void;
   showWindow(): void;
 }

@@ -78,7 +78,9 @@ def create_db_and_tables() -> None:
     import src.chitrika.models.heartbeat  # noqa: F401
     import src.chitrika.models.memory  # noqa: F401
     import src.chitrika.models.message  # noqa: F401
+    import src.chitrika.models.plugin  # noqa: F401
     import src.chitrika.models.provider  # noqa: F401
+    import src.chitrika.models.relationship  # noqa: F401
     import src.chitrika.models.settings  # noqa: F401
 
     SQLModel.metadata.create_all(_engine)

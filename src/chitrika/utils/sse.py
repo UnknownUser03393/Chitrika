@@ -18,9 +18,12 @@ def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
-def sse_start(message_id: str) -> str:
+def sse_start(message_id: str, user_message_id: str | None = None) -> str:
     """Emit the 'start' event when streaming begins."""
-    return sse_event("message", {"type": "start", "message_id": message_id})
+    payload: dict = {"type": "start", "message_id": message_id}
+    if user_message_id:
+        payload["user_message_id"] = user_message_id
+    return sse_event("message", payload)
 
 
 def sse_content(content: str) -> str:

@@ -65,6 +65,49 @@ export interface EmotionState {
   updated_at: string;
 }
 
+export interface Memory {
+  id: string;
+  character_id: string;
+  memory_type: "short_term" | "long_term" | "episodic";
+  content: string;
+  importance: number;
+  emotional_valence: number | null;
+  is_pinned: boolean;
+  is_forgotten: boolean;
+  created_at: string;
+  last_accessed: string;
+  access_count: number;
+}
+
+export interface RelationshipState {
+  character_id: string;
+  stage: "stranger" | "acquaintance" | "friend" | "close" | "intimate";
+  affinity: number;
+  familiarity: number;
+  trust: number;
+  interaction_count: number;
+  positive_interaction_count: number;
+  conflict_count: number;
+  first_interaction_at: string | null;
+  last_interaction_at: string | null;
+  updated_at: string;
+}
+
+export interface PendingNotification {
+  message_id: string;
+  conversation_id: string;
+  character_id: string | null;
+  content_preview: string;
+  is_proactive: boolean;
+  created_at: string | null;
+}
+
+export interface BatchConversationResult {
+  requested: number;
+  affected: number;
+  missing_ids: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Conversations (Chats)
 // ---------------------------------------------------------------------------
@@ -90,9 +133,35 @@ export async function deleteConversation(id: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete conversation: ${res.status}`);
 }
 
+export async function batchDeleteConversations(ids: string[]): Promise<BatchConversationResult> {
+  const res = await fetch(`${BASE}/conversations/batch/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ? `Failed to delete conversations: ${JSON.stringify(err.detail)}` : `Failed to delete conversations: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function clearConversationMessages(id: string): Promise<void> {
   const res = await fetch(`${BASE}/conversations/${id}/messages`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to clear messages: ${res.status}`);
+}
+
+export async function batchClearConversationMessages(ids: string[]): Promise<BatchConversationResult> {
+  const res = await fetch(`${BASE}/conversations/batch/clear-messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ? `Failed to clear conversations: ${JSON.stringify(err.detail)}` : `Failed to clear conversations: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function markConversationRead(id: string): Promise<number> {
@@ -127,6 +196,8 @@ export async function fetchMessages(conversationId: string): Promise<Message[]> 
  * - ``onChunk`` – raw text arriving right now (can span messages)
  * - ``onMessageDone`` – one assistant message is complete
  * - ``onStreamEnd`` – the SSE stream ended (no more messages)
+ * - ``onUserMessageSaved`` – the persisted user message id (replaces the
+ *   temporary ``local-*`` id so recall/delete work without a reload)
  *
  * Returns an AbortController so the caller can cancel mid-stream.
  */
@@ -136,7 +207,8 @@ export function streamMessage(
   onChunk: (text: string) => void,
   onMessageDone: (messageText: string, messageId: string) => void,
   onStreamEnd: () => void,
-  onError: (error: string) => void
+  onError: (error: string) => void,
+  onUserMessageSaved?: (messageId: string) => void
 ): AbortController {
   const controller = new AbortController();
 
@@ -181,6 +253,9 @@ export function streamMessage(
               case "start":
                 currentMessageId = event.message_id;
                 currentMessageText = "";
+                if (event.user_message_id) {
+                  onUserMessageSaved?.(event.user_message_id);
+                }
                 break;
               case "content":
                 currentMessageText += event.content;
@@ -301,6 +376,61 @@ export async function fetchEmotion(characterId: string): Promise<EmotionState> {
   const res = await fetch(`${BASE}/characters/${characterId}/emotion`);
   if (!res.ok) throw new Error(`Failed to fetch emotion: ${res.status}`);
   return res.json();
+}
+
+export async function fetchPendingNotifications(): Promise<PendingNotification[]> {
+  const res = await fetch(`${BASE}/desktop/notifications/pending`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function fetchMemories(
+  characterId: string,
+  includeForgotten = false
+): Promise<Memory[]> {
+  const res = await fetch(
+    `${BASE}/characters/${characterId}/memories?limit=200&include_forgotten=${includeForgotten}`
+  );
+  if (!res.ok) throw new Error(`Failed to fetch memories: ${res.status}`);
+  const data = await res.json();
+  return data.memories || [];
+}
+
+export async function fetchRelationship(characterId: string): Promise<RelationshipState> {
+  const res = await fetch(`${BASE}/characters/${characterId}/relationship`);
+  if (!res.ok) throw new Error(`Failed to fetch relationship: ${res.status}`);
+  return res.json();
+}
+
+export async function createMemory(
+  characterId: string,
+  data: Pick<Memory, "memory_type" | "content"> & Partial<Pick<Memory, "importance" | "is_pinned">>
+): Promise<Memory> {
+  const res = await fetch(`${BASE}/characters/${characterId}/memories`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Failed to create memory: ${res.status}`);
+  return res.json();
+}
+
+export async function updateMemory(
+  memoryId: string,
+  updates: Partial<Pick<Memory, "content" | "importance" | "is_pinned" | "is_forgotten">>
+): Promise<Memory> {
+  const res = await fetch(`${BASE}/memories/${memoryId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) throw new Error(`Failed to update memory: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteMemory(memoryId: string): Promise<void> {
+  const res = await fetch(`${BASE}/memories/${memoryId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to delete memory: ${res.status}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +580,50 @@ export async function updateSettings(
 }
 
 // ---------------------------------------------------------------------------
+// Local plugins
+// ---------------------------------------------------------------------------
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  entrypoint: string;
+  path: string;
+  available: boolean;
+  enabled: boolean;
+  load_error: string | null;
+  installed_at: string;
+  updated_at: string;
+}
+
+export async function fetchPlugins(): Promise<PluginInfo[]> {
+  const res = await fetch(`${BASE}/plugins`);
+  if (!res.ok) throw new Error(`Failed to fetch plugins: ${res.status}`);
+  return res.json();
+}
+
+export async function updatePlugin(id: string, enabled: boolean): Promise<PluginInfo> {
+  const res = await fetch(`${BASE}/plugins/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to update plugin: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function rescanPlugins(): Promise<PluginInfo[]> {
+  const res = await fetch(`${BASE}/plugins/rescan`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to rescan plugins: ${res.status}`);
+  return fetchPlugins();
+}
+
+// ---------------------------------------------------------------------------
 // Import (data migration)
 // ---------------------------------------------------------------------------
 
@@ -469,6 +643,46 @@ export async function importDoubao(sourcePath: string): Promise<ImportResult> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Debug actions
+// ---------------------------------------------------------------------------
+
+export interface DebugActionRequest {
+  character_id: string;
+  conversation_id?: string;
+  deliver_now?: boolean;
+  content?: string;
+  use_llm?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DebugActionResponse {
+  action: string;
+  status: string;
+  character_id: string;
+  conversation_id: string | null;
+  scheduled_message_id: string | null;
+  delivered_message_id: string | null;
+  delivered: boolean;
+  details: Record<string, unknown>;
+}
+
+export async function runDebugAction(
+  action: string,
+  body: DebugActionRequest
+): Promise<DebugActionResponse> {
+  const res = await fetch(`${BASE}/debug/actions/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Debug action failed: ${res.status}`);
   }
   return res.json();
 }

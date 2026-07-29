@@ -1,5 +1,8 @@
 {
   "database_url": "sqlite:///./chitrika.db",
+  "plugins_dir": "./plugins",
+  "emotion_classifier_model_dir": "./models/emotion",
+  "emotion_debug_panel": false,
   "cors_origins": [
     "http://localhost:5173",
     "http://localhost:3000",

@@ -172,11 +172,21 @@ def test_get_conversation(client: TestClient, seeded_character):
     assert resp.json()["id"] == created["id"]
 
 
-def test_delete_conversation(client: TestClient, seeded_character):
+def test_delete_conversation(client: TestClient, session, seeded_character):
+    from src.chitrika.models.heartbeat import ScheduledMessage
+
     created = client.post(
         "/api/conversations",
         json={"character_id": seeded_character.id},
     ).json()
+    scheduled = ScheduledMessage(
+        character_id=seeded_character.id,
+        conversation_id=created["id"],
+        content="queued proactive message",
+    )
+    session.add(scheduled)
+    session.commit()
+    scheduled_id = scheduled.id
 
     resp = client.delete(f"/api/conversations/{created['id']}")
     assert resp.status_code == 204
@@ -184,6 +194,122 @@ def test_delete_conversation(client: TestClient, seeded_character):
     # Verify it's gone
     resp2 = client.get(f"/api/conversations/{created['id']}")
     assert resp2.status_code == 404
+    assert session.get(ScheduledMessage, scheduled_id) is None
+
+
+def test_batch_delete_conversations(client: TestClient, session, seeded_character):
+    from src.chitrika.models.heartbeat import ScheduledMessage
+
+    first = client.post(
+        "/api/conversations",
+        json={"character_id": seeded_character.id},
+    ).json()
+    second = client.post(
+        "/api/conversations",
+        json={"character_id": seeded_character.id},
+    ).json()
+    scheduled = ScheduledMessage(
+        character_id=seeded_character.id,
+        conversation_id=second["id"],
+        content="queued proactive message",
+    )
+    session.add(scheduled)
+    session.commit()
+    scheduled_id = scheduled.id
+
+    resp = client.post(
+        "/api/conversations/batch/delete",
+        json={"ids": [first["id"], second["id"], "missing"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "requested": 3,
+        "affected": 2,
+        "missing_ids": ["missing"],
+    }
+    assert client.get(f"/api/conversations/{first['id']}").status_code == 404
+    assert client.get(f"/api/conversations/{second['id']}").status_code == 404
+    assert session.get(ScheduledMessage, scheduled_id) is None
+
+
+def test_batch_delete_conversations_accepts_legacy_payloads(client: TestClient, seeded_character):
+    first = client.post(
+        "/api/conversations",
+        json={"character_id": seeded_character.id},
+    ).json()
+    second = client.post(
+        "/api/conversations",
+        json={"character_id": seeded_character.id},
+    ).json()
+
+    resp = client.post(
+        "/api/conversations/batch/delete",
+        json={"conversation_ids": [first["id"]]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["affected"] == 1
+
+    resp = client.post(
+        "/api/conversations/batch/delete",
+        json=[second["id"]],
+    )
+    assert resp.status_code == 200
+    assert resp.json()["affected"] == 1
+
+
+def test_batch_delete_conversations_has_no_100_item_limit(client: TestClient):
+    ids = [f"missing-{index}" for index in range(101)]
+
+    resp = client.post(
+        "/api/conversations/batch/delete",
+        json={"ids": ids},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "requested": 101,
+        "affected": 0,
+        "missing_ids": ids,
+    }
+
+
+def test_batch_clear_conversation_messages(client: TestClient, session, seeded_character):
+    from sqlmodel import select
+
+    from src.chitrika.models.message import Message
+
+    first = client.post(
+        "/api/conversations",
+        json={"character_id": seeded_character.id},
+    ).json()
+    second = client.post(
+        "/api/conversations",
+        json={"character_id": seeded_character.id},
+    ).json()
+    messages = [
+        Message(conversation_id=first["id"], role="user", content="first"),
+        Message(conversation_id=second["id"], role="assistant", content="second"),
+    ]
+    for msg in messages:
+        session.add(msg)
+    session.commit()
+
+    resp = client.post(
+        "/api/conversations/batch/clear-messages",
+        json={"ids": [first["id"], second["id"], "missing"]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "requested": 3,
+        "affected": 2,
+        "missing_ids": ["missing"],
+    }
+    stored = session.exec(select(Message).where(Message.id.in_([msg.id for msg in messages]))).all()
+    assert all(msg.is_deleted for msg in stored)
+    assert client.get(f"/api/conversations/{first['id']}").status_code == 200
+    assert client.get(f"/api/conversations/{second['id']}").status_code == 200
 
 
 def test_chats_alias(client: TestClient):
@@ -288,11 +414,167 @@ def test_post_process_emotions_uses_nuanced_signals(session, seeded_character):
     analysis = engine._emotion.analyse(seeded_character.id, apply_decay_before=False)
     emotions = analysis["emotions"]
 
-    assert emotions["fear"] > 0
-    assert emotions["anticipation"] > emotions["fear"]
-    assert emotions["trust"] > 0
-    assert emotions["joy"] > 0
-    assert emotions["surprise"] > 0
+    assert emotions["trust"] > 0 or emotions["joy"] > 0 or emotions["anticipation"] > 0
+    assert emotions["sadness"] <= emotions["joy"] + emotions["trust"]
+
+
+
+def test_post_process_emotions_tracks_assistant_emotion_not_user_emotion(session, seeded_character):
+    """User fear should not be counted as the assistant character's emotion."""
+    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.utils.emotion_nlp import classify_emotion_delta
+
+    user_text = "\u60f3\u6b7b\u4f60\u4e86\u3002\u90a3... \u80fd\u966a\u6211\u804a\u4f1a\u513f\u5417\uff1f\u554a\u554a\u554a\u5bc6\u5ba4\uff01\u6211\u4e0a\u6b21\u53bb\u5fae\u6050\u7ed9\u6211\u5413\u54ed\u4e86\u3002"
+    assistant_text = "hhh\u4f60\u8fd9\u4e48\u83dc\u554a\uff0c\u90a3\u66f4\u8981\u53bb\u4e86\uff0c\u6211\u4fdd\u62a4\u4f60\u3002"
+
+    direct = classify_emotion_delta(user_text, assistant_text)
+    assert direct["joy"] > 0
+    assert direct["trust"] > 0
+    assert direct.get("fear", 0.0) == 0.0
+    assert "sadness" not in direct or direct["sadness"] < direct["joy"]
+
+    engine = ChatEngine(session)
+    engine._emotion.get_or_create_state(seeded_character.id)
+    engine._post_process_emotions(seeded_character.id, user_text, assistant_text)
+
+    analysis = engine._emotion.analyse(seeded_character.id, apply_decay_before=False)
+    emotions = analysis["emotions"]
+
+    assert emotions["joy"] > 0 or emotions["trust"] > 0 or emotions["anticipation"] > 0
+    assert emotions["sadness"] < max(emotions["joy"], emotions["trust"], emotions["anticipation"])
+
+
+def test_chat_extracts_and_reinforces_long_term_user_facts(session, seeded_character):
+    """Explicit self-disclosures become durable memories without an LLM."""
+    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.models.memory import Memory
+    from sqlmodel import select
+
+    engine = ChatEngine(session)
+    engine._post_process_memories(
+        seeded_character.id,
+        "我叫小林，我喜欢爵士乐。",
+        "记住啦。",
+        "source-1",
+    )
+
+    durable = session.exec(
+        select(Memory).where(
+            Memory.character_id == seeded_character.id,
+            Memory.memory_type == "long_term",
+        )
+    ).all()
+    assert {memory.content for memory in durable} == {
+        "用户的名字是小林",
+        "用户喜欢爵士乐",
+    }
+
+    original = next(memory for memory in durable if memory.content == "用户喜欢爵士乐")
+    original_importance = original.importance
+    engine._post_process_memories(
+        seeded_character.id,
+        "我也喜欢爵士乐。",
+        "我记得。",
+        "source-2",
+    )
+    repeated = session.exec(
+        select(Memory).where(
+            Memory.character_id == seeded_character.id,
+            Memory.content == "用户喜欢爵士乐",
+        )
+    ).all()
+    assert len(repeated) == 1
+    assert repeated[0].importance > original_importance
+
+
+def test_proactive_fallback_delivers_without_provider(session, seeded_character):
+    """Offline heartbeat messages must contain text and reach the chat."""
+    from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
+    from src.chitrika.models.conversation import Conversation
+    from src.chitrika.models.emotion import EmotionState
+    from src.chitrika.models.heartbeat import ScheduledMessage
+    from src.chitrika.models.message import Message
+    from sqlmodel import select
+
+    engine = HeartbeatEngine.__new__(HeartbeatEngine)
+    state = session.exec(
+        select(EmotionState).where(EmotionState.character_id == seeded_character.id)
+    ).one()
+    state.sadness = 0.8
+
+    engine._initiate_proactive(session, seeded_character, state, loneliness=0.85)
+    scheduled = session.exec(
+        select(ScheduledMessage).where(
+            ScheduledMessage.character_id == seeded_character.id
+        )
+    ).one()
+    assert scheduled.content
+
+    engine._deliver_due_messages(session)
+    delivered = session.exec(
+        select(Message).where(Message.scheduled_message_id == scheduled.id)
+    ).one()
+    assert delivered.content == scheduled.content
+    assert scheduled.status == "sent"
+    assert session.get(Conversation, scheduled.conversation_id) is not None
+
+    engine._initiate_proactive(session, seeded_character, state, loneliness=0.9)
+    scheduled_rows = session.exec(
+        select(ScheduledMessage).where(
+            ScheduledMessage.character_id == seeded_character.id
+        )
+    ).all()
+    assert len(scheduled_rows) == 1
+
+
+def test_debug_action_forces_loneliness_proactive_message(client: TestClient, seeded_character):
+    resp = client.post(
+        "/api/debug/actions/loneliness_proactive_message",
+        json={
+            "character_id": seeded_character.id,
+            "content": "debug proactive ping",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["delivered"] is True
+    assert data["scheduled_message_id"]
+    assert data["delivered_message_id"]
+
+    messages = client.get(f"/api/conversations/{data['conversation_id']}/messages").json()
+    assert [message["content"] for message in messages["messages"]] == [
+        "debug proactive ping",
+    ]
+    assert messages["messages"][0]["role"] == "assistant"
+
+
+
+def test_heartbeat_schedules_after_long_user_absence(session, seeded_character):
+    """A neutral companion eventually reaches the proactive threshold."""
+    from datetime import timedelta
+    from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
+    from src.chitrika.models.heartbeat import ScheduledMessage
+    from src.chitrika.utils.datetime_helpers import utcnow
+    from sqlmodel import select
+
+    seeded_character.created_at = utcnow() - timedelta(hours=48)
+    session.add(seeded_character)
+    session.commit()
+
+    engine = HeartbeatEngine.__new__(HeartbeatEngine)
+    engine.LONELINESS_THRESHOLD = 0.6
+    engine._get_decay_rate = lambda: 0.15
+    engine._process_character(session, seeded_character)
+
+    scheduled = session.exec(
+        select(ScheduledMessage).where(
+            ScheduledMessage.character_id == seeded_character.id
+        )
+    ).one()
+    assert scheduled.content
+    assert scheduled.status == "pending"
 
 
 def test_relative_time_uses_readable_chinese_labels():

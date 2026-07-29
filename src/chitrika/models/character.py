@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from src.chitrika.models.heartbeat import HeartbeatTask, ScheduledMessage
     from src.chitrika.models.memory import Memory
     from src.chitrika.models.provider import LLMProvider
+    from src.chitrika.models.relationship import RelationshipState
 
 
 class Character(SQLModel, table=True):
@@ -64,6 +65,7 @@ class Character(SQLModel, table=True):
     provider: Optional["LLMProvider"] = Relationship(back_populates="characters")
     conversations: list["Conversation"] = Relationship(back_populates="character")
     emotion_state: Optional["EmotionState"] = Relationship(back_populates="character")
+    relationship_state: Optional["RelationshipState"] = Relationship(back_populates="character")
     memories: list["Memory"] = Relationship(back_populates="character")
     heartbeat_tasks: list["HeartbeatTask"] = Relationship(back_populates="character")
     scheduled_messages: list["ScheduledMessage"] = Relationship(back_populates="character")

@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PanelLeftClose, Search, Pin, Settings, Plus, RefreshCw, Trash2, Info } from "lucide-react";
+import { Check, PanelLeftClose, Search, Pin, Settings, Plus, RefreshCw, Trash2, Info, X } from "lucide-react";
 import { toast } from "sonner";
 import type { Chat } from "../services/api";
 import {
+  batchClearConversationMessages,
+  batchDeleteConversations,
   clearConversationMessages,
   deleteConversation,
   fetchConversations,
@@ -43,6 +45,9 @@ export function ChatListView({
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(new Set());
+  const [batchWorking, setBatchWorking] = useState(false);
 
   // Fetch conversations from the backend
   const loadChats = useCallback(async () => {
@@ -72,7 +77,65 @@ export function ChatListView({
 
   const handleContextMenu = (chatId: string, e: React.MouseEvent) => {
     e.preventDefault();
+    if (batchMode) return;
     setContextMenu({ chatId, x: e.clientX, y: e.clientY });
+  };
+
+  const toggleBatchMode = () => {
+    setContextMenu(null);
+    setBatchMode((current) => {
+      if (current) setSelectedChatIds(new Set());
+      return !current;
+    });
+  };
+
+  const toggleChatSelected = (chatId: string) => {
+    setSelectedChatIds((current) => {
+      const next = new Set(current);
+      if (next.has(chatId)) {
+        next.delete(chatId);
+      } else {
+        next.add(chatId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedChatIds(new Set([...pinned, ...recent].map((chat) => chat.id)));
+  };
+
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedChatIds);
+    if (ids.length === 0) return;
+    setBatchWorking(true);
+    try {
+      const result = await batchDeleteConversations(ids);
+      toast.success(`Deleted ${result.affected} conversations`);
+      setSelectedChatIds(new Set());
+      setBatchMode(false);
+      onChatDeleted?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete conversations");
+    } finally {
+      setBatchWorking(false);
+    }
+  };
+
+  const handleBatchClearMessages = async () => {
+    const ids = Array.from(selectedChatIds);
+    if (ids.length === 0) return;
+    setBatchWorking(true);
+    try {
+      const result = await batchClearConversationMessages(ids);
+      toast.success(`Cleared ${result.affected} conversations`);
+      setSelectedChatIds(new Set());
+      onChatMessagesCleared?.(activeChatId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to clear conversations");
+    } finally {
+      setBatchWorking(false);
+    }
   };
 
   const handleDeleteChat = async (chatId: string) => {
@@ -110,6 +173,8 @@ export function ChatListView({
   const recent = chats.filter(
     (c) => !(c.pinned || false) && c.name.toLowerCase().includes(search.toLowerCase())
   );
+  const visibleChats = [...pinned, ...recent];
+  const selectedCount = selectedChatIds.size;
 
   return (
     <div className="flex flex-col h-full">
@@ -133,8 +198,18 @@ export function ChatListView({
           <Info size={18} />
         </button>
         <button
+          onClick={toggleBatchMode}
+          className={`px-2 py-1 rounded-full transition-colors ${batchMode ? "text-[var(--app-text)] bg-[var(--app-elevated)]" : "text-[var(--app-muted)] hover:text-[var(--app-text)]"}`}
+          aria-label="Manage chats"
+          title="Manage chats"
+          style={{ fontSize: "12px", fontWeight: 600 }}
+        >
+          {batchMode ? "Done" : "Manage"}
+        </button>
+        <button
           onClick={onNewChat}
-          className="p-1.5 rounded-full text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors"
+          disabled={batchMode}
+          className="p-1.5 rounded-full text-[var(--app-muted)] hover:text-[var(--app-text)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           aria-label="New chat"
           title="New chat"
         >
@@ -163,6 +238,56 @@ export function ChatListView({
           />
         </div>
       </div>
+
+      {/* Batch toolbar */}
+      {batchMode && (
+        <div className="px-3 pb-2 shrink-0">
+          <div className="rounded-xl bg-[var(--app-panel)] border border-[var(--app-border)] px-3 py-2 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+                {selectedCount} selected
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={selectAllVisible}
+                  disabled={visibleChats.length === 0 || batchWorking}
+                  className="text-[var(--app-muted)] hover:text-[var(--app-text)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{ fontSize: "12px" }}
+                >
+                  Select all
+                </button>
+                <button
+                  onClick={toggleBatchMode}
+                  disabled={batchWorking}
+                  className="inline-flex items-center gap-1 text-[var(--app-muted)] hover:text-[var(--app-text)] disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{ fontSize: "12px" }}
+                >
+                  <X size={13} />
+                  Cancel
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleBatchClearMessages}
+                disabled={selectedCount === 0 || batchWorking}
+                className="rounded-lg px-2 py-1.5 bg-[var(--app-elevated)] text-[var(--app-text)] disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ fontSize: "12px", fontWeight: 600 }}
+              >
+                Clear messages
+              </button>
+              <button
+                onClick={handleBatchDelete}
+                disabled={selectedCount === 0 || batchWorking}
+                className="rounded-lg px-2 py-1.5 bg-red-500/10 text-[var(--app-danger)] disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ fontSize: "12px", fontWeight: 600 }}
+              >
+                Delete chats
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chat List */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -208,9 +333,11 @@ export function ChatListView({
                     key={chat.id}
                     chat={chat}
                     active={activeChatId === chat.id}
-                    onClick={() => setActiveChatId(chat.id)}
+                    onClick={() => batchMode ? toggleChatSelected(chat.id) : setActiveChatId(chat.id)}
                     onContextMenu={(e) => handleContextMenu(chat.id, e)}
                     showPin
+                    batchMode={batchMode}
+                    selected={selectedChatIds.has(chat.id)}
                   />
                 ))}
               </>
@@ -220,8 +347,10 @@ export function ChatListView({
                 key={chat.id}
                 chat={chat}
                 active={activeChatId === chat.id}
-                onClick={() => setActiveChatId(chat.id)}
+                onClick={() => batchMode ? toggleChatSelected(chat.id) : setActiveChatId(chat.id)}
                 onContextMenu={(e) => handleContextMenu(chat.id, e)}
+                batchMode={batchMode}
+                selected={selectedChatIds.has(chat.id)}
               />
             ))}
             {pinned.length === 0 && recent.length === 0 && (
@@ -293,17 +422,29 @@ interface ChatItemProps {
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   showPin?: boolean;
+  batchMode?: boolean;
+  selected?: boolean;
 }
 
-function ChatItem({ chat, active, onClick, onContextMenu, showPin }: ChatItemProps) {
+function ChatItem({ chat, active, onClick, onContextMenu, showPin, batchMode, selected }: ChatItemProps) {
   return (
     <button
       onClick={onClick}
       onContextMenu={onContextMenu}
       className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left ${
-        active ? "bg-[var(--app-accent-soft)]" : "hover:bg-[var(--app-hover)]"
-      }`}
+        active && !batchMode ? "bg-[var(--app-accent-soft)]" : "hover:bg-[var(--app-hover)]"
+      } ${selected ? "bg-[var(--app-accent-soft)]" : ""}`}
     >
+      {batchMode && (
+        <span
+          className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
+            selected ? "bg-[var(--app-accent)] border-[var(--app-accent)] text-white" : "border-[var(--app-border)] text-transparent"
+          }`}
+        >
+          <Check size={13} />
+        </span>
+      )}
+
       {/* Avatar */}
       <div
         className="w-12 h-12 rounded-full flex items-center justify-center text-white shrink-0"

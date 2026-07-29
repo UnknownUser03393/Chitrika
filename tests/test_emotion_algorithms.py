@@ -96,6 +96,17 @@ def test_loneliness_neutral():
     assert result == pytest.approx(0.4)
 
 
+def test_loneliness_grows_during_long_absence():
+    emotions = {d: 0.0 for d in DIMENSIONS}
+    recent = compute_loneliness(emotions, hours_since_interaction=4)
+    absent = compute_loneliness(emotions, hours_since_interaction=48)
+    very_absent = compute_loneliness(emotions, hours_since_interaction=500)
+
+    assert recent == pytest.approx(0.4)
+    assert absent > 0.6
+    assert very_absent == pytest.approx(0.85)
+
+
 def test_loneliness_very_happy():
     """High joy, high trust → low loneliness."""
     emotions = {d: 0.0 for d in DIMENSIONS}

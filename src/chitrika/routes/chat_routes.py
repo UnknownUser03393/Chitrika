@@ -12,6 +12,8 @@ from src.chitrika.database import get_session
 from src.chitrika.engines.chat_engine import _relative_time
 from src.chitrika.schemas.chat_schemas import (
     ChatResponse,
+    ConversationBatchRequest,
+    ConversationBatchResponse,
     ConversationCreate,
     ConversationDetail,
     MessageEdit,
@@ -105,6 +107,54 @@ def create_conversation(
         return ConversationDetail.model_validate(conv)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Batch conversation operations
+# ---------------------------------------------------------------------------
+
+
+@router.post("/conversations/batch/delete")
+def batch_delete_conversations(
+    body: ConversationBatchRequest | list[str],
+    session: Session = Depends(get_session),
+) -> ConversationBatchResponse:
+    """Delete multiple conversations and all their messages."""
+    from src.chitrika.engines.chat_engine import ChatEngine
+
+    ids = _conversation_batch_ids(body)
+    engine = ChatEngine(session)
+    affected, missing_ids = engine.delete_conversations(ids)
+    return ConversationBatchResponse(
+        requested=len(ids),
+        affected=affected,
+        missing_ids=missing_ids,
+    )
+
+
+@router.post("/conversations/batch/clear-messages")
+def batch_clear_conversation_messages(
+    body: ConversationBatchRequest | list[str],
+    session: Session = Depends(get_session),
+) -> ConversationBatchResponse:
+    """Clear messages from multiple conversations without deleting them."""
+    from src.chitrika.engines.chat_engine import ChatEngine
+
+    ids = _conversation_batch_ids(body)
+    engine = ChatEngine(session)
+    affected, missing_ids = engine.clear_conversations_messages(ids)
+    return ConversationBatchResponse(
+        requested=len(ids),
+        affected=affected,
+        missing_ids=missing_ids,
+    )
+
+
+def _conversation_batch_ids(body: ConversationBatchRequest | list[str]) -> list[str]:
+    ids = body if isinstance(body, list) else body.ids
+    if not ids:
+        raise HTTPException(status_code=422, detail="At least one conversation id is required")
+    return ids
 
 
 # ---------------------------------------------------------------------------

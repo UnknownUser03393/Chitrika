@@ -20,6 +20,10 @@ import {
   Heart,
   Activity,
   Gauge,
+  Brain,
+  Puzzle,
+  RefreshCw,
+  Bug,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
@@ -38,10 +42,15 @@ import {
   deleteProvider,
   fetchSettings,
   updateSettings,
+  fetchPlugins,
+  updatePlugin,
+  rescanPlugins,
 } from "../services/api";
-import type { Character, LLMProvider, LLMProviderCreate, LLMProviderUpdate, AppSettings } from "../services/api";
+import type { Character, LLMProvider, LLMProviderCreate, LLMProviderUpdate, AppSettings, PluginInfo } from "../services/api";
 import { CharacterForm } from "./CharacterForm";
 import { ProviderForm } from "./ProviderForm";
+import { CompanionMindView } from "./CompanionMindView";
+import { DebugPanel } from "./DebugPanel";
 import { themes } from "../preferences";
 import type { Preferences, ThemeId } from "../preferences";
 
@@ -52,7 +61,7 @@ interface Props {
   setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
 }
 
-type Category = "main" | "preferences" | "provider" | "models" | "app";
+type Category = "main" | "preferences" | "provider" | "models" | "mind" | "app" | "plugins" | "debug";
 
 export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   const [category, setCategory] = useState<Category>("main");
@@ -62,6 +71,7 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   const [loading, setLoading] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
 
   // Fetch characters, providers, and settings from backend
   useEffect(() => {
@@ -70,12 +80,14 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
       fetchCharacters(),
       fetchProviders(),
       fetchSettings().catch(() => null),
+      fetchPlugins().catch(() => []),
     ])
-      .then(([chars, provs, settings]) => {
+      .then(([chars, provs, settings, discoveredPlugins]) => {
         setCharacters(chars);
         setModels(chars.map(characterToModel));
         setProviders(provs);
         if (settings) setAppSettings(settings);
+        setPlugins(discoveredPlugins);
         setLoading(false);
       })
       .catch(() => {
@@ -208,6 +220,24 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
     setCategory(cat);
   };
 
+  const handlePluginToggle = async (id: string, enabled: boolean) => {
+    try {
+      const updated = await updatePlugin(id, enabled);
+      setPlugins((current) => current.map((item) => item.id === id ? updated : item));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update plugin");
+    }
+  };
+
+  const handlePluginRescan = async () => {
+    try {
+      setPlugins(await rescanPlugins());
+      toast.success("Plugin directory rescanned");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to rescan plugins");
+    }
+  };
+
   const handleBack = () => {
     showForm?.(null);
     if (category === "main") {
@@ -226,6 +256,12 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
       ? "LLM Provider"
       : category === "models"
       ? "Model List"
+      : category === "mind"
+      ? "Mind & Memory"
+      : category === "plugins"
+      ? "Plugins"
+      : category === "debug"
+      ? "Debug"
       : "App Settings";
 
   return (
@@ -261,7 +297,10 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
                 onPreferences={() => navigateTo("preferences")}
                 onProvider={() => navigateTo("provider")}
                 onModels={() => navigateTo("models")}
+                onMind={() => navigateTo("mind")}
                 onAppSettings={() => navigateTo("app")}
+                onPlugins={() => navigateTo("plugins")}
+                onDebug={() => navigateTo("debug")}
               />
             </motion.div>
           )}
@@ -344,6 +383,49 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
                 saving={settingsSaving}
                 onSave={handleSaveSettings}
               />
+            </motion.div>
+          )}
+          {category === "mind" && (
+            <motion.div
+              key="mind"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="w-full overflow-x-hidden"
+            >
+              <CompanionMindSettings
+                characters={characters.filter((character) => character.enabled)}
+                showForm={showForm}
+              />
+            </motion.div>
+          )}
+          {category === "plugins" && (
+            <motion.div
+              key="plugins"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="w-full overflow-x-hidden"
+            >
+              <PluginSettings
+                plugins={plugins}
+                onToggle={handlePluginToggle}
+                onRescan={handlePluginRescan}
+              />
+            </motion.div>
+          )}
+          {category === "debug" && (
+            <motion.div
+              key="debug"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="w-full overflow-x-hidden"
+            >
+              <DebugPanel />
             </motion.div>
           )}
         </AnimatePresence>
@@ -480,12 +562,18 @@ function MainSettings({
   onPreferences,
   onProvider,
   onModels,
+  onMind,
   onAppSettings,
+  onPlugins,
+  onDebug,
 }: {
   onPreferences: () => void;
   onProvider: () => void;
   onModels: () => void;
+  onMind: () => void;
   onAppSettings: () => void;
+  onPlugins: () => void;
+  onDebug: () => void;
 }) {
   return (
     <div className="py-2">
@@ -556,6 +644,19 @@ function MainSettings({
           icon={
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "rgba(236,72,153,0.15)" }}
+            >
+              <Brain size={16} style={{ color: "#EC4899" }} />
+            </div>
+          }
+          label="Mind & Memory"
+          sublabel="Inspect emotion and manage memories"
+          onClick={onMind}
+        />
+        <NavItem
+          icon={
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
               style={{ background: "rgba(245,158,11,0.15)" }}
             >
               <Sliders size={16} style={{ color: "#F59E0B" }} />
@@ -564,6 +665,36 @@ function MainSettings({
           label="App Settings"
           sublabel="Heartbeat, emotion, CORS"
           onClick={onAppSettings}
+        />
+        <NavItem
+          icon={
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "rgba(14,165,233,0.15)" }}
+            >
+              <Puzzle size={16} style={{ color: "#0EA5E9" }} />
+            </div>
+          }
+          label="Plugins"
+          sublabel="Manage local extensions"
+          onClick={onPlugins}
+        />
+      </div>
+
+      <div className="px-2 mt-3 space-y-0.5">
+        <SectionLabel label="Development" />
+        <NavItem
+          icon={
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "rgba(239,68,68,0.15)" }}
+            >
+              <Bug size={16} style={{ color: "#EF4444" }} />
+            </div>
+          }
+          label="Debug"
+          sublabel="Force actions &amp; test behavior"
+          onClick={onDebug}
         />
       </div>
 
@@ -576,6 +707,116 @@ function MainSettings({
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PluginSettings({
+  plugins,
+  onToggle,
+  onRescan,
+}: {
+  plugins: PluginInfo[];
+  onToggle: (id: string, enabled: boolean) => Promise<void>;
+  onRescan: () => Promise<void>;
+}) {
+  return (
+    <div className="py-2 px-2 space-y-1">
+      <div className="flex items-center justify-between pr-2">
+        <SectionLabel label={`Local plugins (${plugins.length})`} />
+        <button
+          onClick={() => void onRescan()}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[var(--app-muted)] hover:text-[var(--app-text)] hover:bg-white/5"
+          style={{ fontSize: "12px" }}
+        >
+          <RefreshCw size={13} />
+          Rescan
+        </button>
+      </div>
+
+      {plugins.length === 0 ? (
+        <div className="px-4 py-10 text-center">
+          <Puzzle size={28} className="mx-auto mb-3 text-[var(--app-muted)]" />
+          <p className="text-[var(--app-text)] text-sm font-medium">No plugins found</p>
+          <p className="mt-1 text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+            Add a plugin folder under the configured plugins directory, then rescan.
+          </p>
+        </div>
+      ) : plugins.map((plugin) => (
+        <div
+          key={plugin.id}
+          className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5"
+          style={{ opacity: plugin.available ? 1 : 0.55 }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-sky-500/10 shrink-0">
+              <Puzzle size={17} className="text-sky-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-[var(--app-text)] text-sm font-semibold">{plugin.name}</span>
+                <span className="text-[var(--app-muted)]" style={{ fontSize: "10px" }}>v{plugin.version}</span>
+              </div>
+              <p className="truncate text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
+                {plugin.description || plugin.id}
+              </p>
+            </div>
+            <SwitchToggle
+              checked={plugin.enabled && plugin.available}
+              onCheckedChange={(value) => void onToggle(plugin.id, value)}
+            />
+          </div>
+          {!plugin.available && (
+            <p className="mt-2 text-amber-400" style={{ fontSize: "11px" }}>Plugin files are missing.</p>
+          )}
+          {plugin.load_error && (
+            <p className="mt-2 break-words text-red-400" style={{ fontSize: "11px" }}>{plugin.load_error}</p>
+          )}
+        </div>
+      ))}
+
+      <p className="px-3 pt-3 text-[var(--app-muted)]" style={{ fontSize: "11px", lineHeight: 1.5 }}>
+        Local plugins execute trusted Python code inside Chitrika. Only enable plugins you trust.
+      </p>
+    </div>
+  );
+}
+
+function CompanionMindSettings({
+  characters,
+  showForm,
+}: {
+  characters: Character[];
+  showForm?: (form: React.ReactNode | null) => void;
+}) {
+  return (
+    <div className="px-2 py-2">
+      <SectionLabel label="Companions" />
+      {characters.length === 0 ? (
+        <p className="px-3 py-8 text-center text-sm text-[var(--app-muted)]">
+          Create and enable a character first.
+        </p>
+      ) : characters.map((character) => (
+        <NavItem
+          key={character.id}
+          icon={
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+              style={{ background: character.color }}
+            >
+              {character.initials || character.display_name.slice(0, 1)}
+            </div>
+          }
+          label={character.display_name}
+          sublabel="Emotion state, durable facts, and recent context"
+          onClick={() => showForm?.(
+            <CompanionMindView
+              character={character}
+              onClose={() => showForm?.(null)}
+            />
+          )}
+        />
+      ))}
     </div>
   );
 }

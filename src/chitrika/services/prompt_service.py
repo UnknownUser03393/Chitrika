@@ -10,6 +10,7 @@ from src.chitrika.models.character import Character
 from src.chitrika.models.emotion import EmotionState
 from src.chitrika.models.memory import Memory
 from src.chitrika.models.message import Message
+from src.chitrika.models.relationship import RelationshipState
 from src.chitrika.utils.emotion_algorithms import compute_loneliness, compute_mood
 
 
@@ -25,6 +26,7 @@ class PromptService:
         character: Character,
         emotion_state: EmotionState,
         memories: list[Memory],
+        relationship_state: RelationshipState | None = None,
     ) -> str:
         """Assemble the system prompt: personality + state + memories + instructions."""
         emotions = emotion_state.to_dict()
@@ -56,6 +58,18 @@ class PromptService:
         parts.append(f"情绪：{emotion_summary}")
         parts.append(f"孤独感：{loneliness:.2f}")
 
+        if relationship_state is not None:
+            parts.append("")
+            parts.append("=== 你和用户的关系 ===")
+            parts.append(f"关系阶段：{relationship_state.stage}")
+            parts.append(f"熟悉度：{relationship_state.familiarity:.2f}")
+            parts.append(f"亲密倾向：{relationship_state.affinity:.2f}")
+            parts.append(f"关系信任：{relationship_state.trust:.2f}")
+            parts.append(
+                "根据关系阶段自然调整称呼、主动程度和自我袒露；"
+                "不要宣读这些数值，也不要假装关系比实际更亲密。"
+            )
+
         parts.append("")
         parts.append("=== 你记得的事 ===")
         parts.append(memory_block)
@@ -79,6 +93,7 @@ class PromptService:
         recent_messages: list[Message],
         *,
         system_prompt_override: str | None = None,
+        relationship_state: RelationshipState | None = None,
     ) -> list[dict[str, str]]:
         """Build the complete message list for an LLM chat completion call.
 
@@ -87,7 +102,7 @@ class PromptService:
             2. user/assistant pairs: recent conversation history (last ~30)
         """
         system = system_prompt_override or self.build_system_prompt(
-            character, emotion_state, memories
+            character, emotion_state, memories, relationship_state
         )
 
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
@@ -108,18 +123,28 @@ class PromptService:
         character: Character,
         emotion_state: EmotionState,
         hours_since_last: float,
+        recent_messages: list[str] | None = None,
     ) -> str:
         """Build the prompt used to decide whether to initiate contact."""
         emotions = emotion_state.to_dict()
         mood = compute_mood(emotions)
         loneliness = compute_loneliness(emotions)
 
+        context_block = ""
+        if recent_messages:
+            context_block = "最近的对话记录：\n" + "\n".join(
+                f"  {line}" for line in recent_messages
+            ) + "\n\n"
+
         return f"""你是{character.display_name}。
 你当前的状态：
 心情：{mood}
 孤独感：{loneliness:.2f}（0=不孤独，1=非常孤独）
-你已经 {hours_since_last:.1f} 小时没有和用户说话了。
+
+{context_block}用户已经 {hours_since_last:.1f} 小时没说话了，突然消失了。
+你不是在续写对话——你是发现对方掉线了，想去戳他一下。
 根据你的性格，你现在想主动联系用户吗？
+如果要发消息，消息要短、自然，像真人发现对方不回消息了一样。
 请只回复一个 JSON 对象（不要有其他文字）：
 {{
   "action": "now" | "wait" | "cancel",

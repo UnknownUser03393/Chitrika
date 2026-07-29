@@ -280,6 +280,12 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
           streamFrameRef.current = null;
         }
         setMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
+      },
+      // -- onUserMessageSaved ----------------------------------
+      (userMessageId) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === userMsg.id ? { ...m, id: userMessageId } : m))
+        );
       }
     );
   }, [input, isTyping, activeChatId, onChatListChanged, prefs.streamResponses, scheduleStreamingFlush]);
@@ -602,6 +608,10 @@ const MessageBubble = memo(function MessageBubble({
   if (isRecalled) {
     return (
       <motion.div
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onOpenMenu(message, event.clientX, event.clientY);
+        }}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, transition: { duration: 0.12 } }}

@@ -6,7 +6,7 @@ import { useLang } from "./LanguageContext";
 import { translations } from "./i18n";
 import { useScrollReveal } from "./useScrollReveal";
 import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
-import { importDoubao } from "../services/api";
+import { importDoubao } from "../../services/api";
 
 interface Props {
   onGetStarted: () => void;
