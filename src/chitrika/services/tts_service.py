@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -16,6 +17,38 @@ logger = logging.getLogger("chitrika.tts")
 
 class TTSError(RuntimeError):
     """Raised when an upstream TTS provider rejects a request."""
+
+
+# Sentence-final punctuation GPT-SoVITS uses as a boundary. Guaranteeing one on
+# short replies ("嗯" → "嗯。") gives the model an explicit end anchor — without
+# it, short utterances tend to sound rushed, flat, or cut off.
+_SENTENCE_END_CHARS = frozenset("。！？…；：,.!?;:…")
+
+# Markdown / formatting artifacts that must never be spoken.
+_MARKDOWN_RE = re.compile(r"[`*_~]")
+# Emoji and misc symbols (approximate ranges) — not pronounceable, skip them.
+_EMOJI_RE = re.compile(
+    r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0000FE00-\U0000FE0F"
+    r"\U0001F1E6-\U0001F1FF]"
+)
+
+
+def _normalize_tts_text(text: str) -> str:
+    """Clean assistant text for synthesis and guarantee a sentence boundary.
+
+    GPT-SoVITS anchors prosody and pauses on punctuation. A bare short reply
+    (e.g. "嗯", "好") carries no boundary, so the model produces a rushed, flat,
+    cut-off utterance. Stripping markdown/emoji also prevents garbage syllables.
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+    text = _MARKDOWN_RE.sub("", text)
+    text = _EMOJI_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if text and text[-1] not in _SENTENCE_END_CHARS:
+        text += "。"
+    return text
 
 
 def _speech_url(base_url: str) -> str:
@@ -141,7 +174,7 @@ def _synthesize_gptsovits(request: TTSRequest) -> tuple[bytes, str]:
     prompt_text, prompt_lang = _resolve_gptsovits_prompt(request)
 
     payload = {
-        "text": request.text,
+        "text": _normalize_tts_text(request.text),
         "text_lang": request.text_lang,
         "ref_audio_path": request.ref_audio_path,
         "prompt_text": prompt_text,

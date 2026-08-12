@@ -4,7 +4,38 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from src.chitrika.services.tts_service import _speech_url
+from src.chitrika.services.tts_service import (
+    _normalize_tts_text,
+    _speech_url,
+)
+
+
+def test_normalize_tts_text_adds_boundary_to_short_replies():
+    """Short replies without punctuation get an explicit sentence end."""
+    assert _normalize_tts_text("嗯") == "嗯。"
+    assert _normalize_tts_text("好的") == "好的。"
+    assert _normalize_tts_text(" 好 ") == "好。"
+
+
+def test_normalize_tts_text_keeps_existing_end_punctuation():
+    assert _normalize_tts_text("我来了！") == "我来了！"
+    assert _normalize_tts_text("在吗？") == "在吗？"
+    assert _normalize_tts_text("行吧…") == "行吧…"
+
+
+def test_normalize_tts_text_strips_markdown_and_emoji():
+    assert _normalize_tts_text("**你好**呀") == "你好呀。"
+    assert _normalize_tts_text("`code` 你好") == "code 你好。"
+    assert _normalize_tts_text("哈哈😄") == "哈哈。"
+
+
+def test_normalize_tts_text_collapses_whitespace():
+    assert _normalize_tts_text("今天\n  天气 不错") == "今天 天气 不错。"
+
+
+def test_normalize_tts_text_handles_empty():
+    assert _normalize_tts_text("") == ""
+    assert _normalize_tts_text("   ") == ""
 
 
 def test_speech_url_accepts_base_or_endpoint():
