@@ -4,16 +4,16 @@ Models are large (emotion ~1.1 GB, embedding ~470 MB) so they are not
 committed to git. This script ensures they exist under ``models/`` and
 downloads any missing files from Hugging Face.
 
+Files are fetched by direct ``resolve`` URL with resumable chunked downloads
+(no dependency on the ``huggingface_hub`` package, whose API listing is not
+served by the mainland-China mirror). If the direct endpoint fails, the file is
+retried through the official mirror ``hf-mirror.com``.
+
 Usage:
     uv run python scripts/download_models.py
-    # or with a custom HF repo / private repos:
+    # or with a custom HF repo:
     CHITRIKA_EMOTION_MODEL_REPO=your-user/emotion-onnx \\
-    CHITRIKA_EMBEDDING_MODEL_REPO=your-user/embedding-onnx \\
     uv run python scripts/download_models.py
-
-For users in mainland China, Hugging Face is often slow/blocked. Use the
-official mirror by setting HF_ENDPOINT (huggingface_hub reads it automatically):
-    HF_ENDPOINT=https://hf-mirror.com uv run python scripts/download_models.py
 """
 
 from __future__ import annotations
@@ -21,24 +21,25 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Set your own repo ids via env or CLI args. The defaults match the upstream
-# Chitrika repos; change them if you forked or made the repos private.
 DEFAULT_EMOTION_REPO = os.environ.get(
     "CHITRIKA_EMOTION_MODEL_REPO", "NeatAvocado14/emotion-onnx"
 )
 DEFAULT_EMBEDDING_REPO = os.environ.get(
     "CHITRIKA_EMBEDDING_MODEL_REPO", "NeatAvocado14/embedding-onnx"
 )
+DIRECT_ENDPOINT = "https://huggingface.co"
+MIRROR_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com").rstrip("/")
 
 # Required files per model dir. If any are missing the whole dir is refreshed.
 MODEL_SPECS = {
     "emotion": {
         "dir": "models/emotion",
-        "repo": DEFAULT_EMOTION_REPO,
         "files": [
             "model.onnx",
             "tokenizer.json",
@@ -48,7 +49,6 @@ MODEL_SPECS = {
     },
     "embedding": {
         "dir": "models/embedding",
-        "repo": DEFAULT_EMBEDDING_REPO,
         "files": [
             "model.onnx",
             "tokenizer.json",
@@ -60,50 +60,122 @@ MODEL_SPECS = {
     },
 }
 
-
-def _ensure_huggingface_hub() -> None:
-    try:
-        import huggingface_hub  # noqa: F401
-    except ImportError:
-        sys.exit(
-            "huggingface_hub is not installed. Run:  uv pip install huggingface_hub"
-        )
+_CHUNK = 1 << 16  # 64 KiB
 
 
-def _download(spec: dict) -> None:
-    from huggingface_hub import snapshot_download
+def ensure_models(
+    *,
+    force: bool = False,
+    emotion_repo: str | None = None,
+    embedding_repo: str | None = None,
+) -> None:
+    """Ensure both ONNX model dirs exist, downloading any missing files.
 
+    Raises RuntimeError if a download ultimately fails, so callers (e.g.
+    ``chitrika_autodownload.py``) can react.
+    """
+    repos = {
+        "emotion": emotion_repo or DEFAULT_EMOTION_REPO,
+        "embedding": embedding_repo or DEFAULT_EMBEDDING_REPO,
+    }
+    for name, spec in MODEL_SPECS.items():
+        _download_spec(name, repos[name], spec, force=force)
+
+
+def _download_spec(name: str, repo: str, spec: dict, *, force: bool) -> None:
     model_dir = PROJECT_ROOT / spec["dir"]
     model_dir.mkdir(parents=True, exist_ok=True)
     missing = [
-        name for name in spec["files"] if not (model_dir / name).is_file()
+        fname for fname in spec["files"] if not (model_dir / fname).is_file()
     ]
-    if not missing and not args.force:
-        print(f"[{spec['repo']}] {model_dir.relative_to(PROJECT_ROOT)}: ok, nothing to do")
+    if not missing and not force:
+        print(f"[{repo}] {spec['dir']}: ok, nothing to do")
         return
 
-    reason = "forced refresh" if args.force else f"missing {', '.join(missing)}"
-    print(f"[{spec['repo']}] {model_dir.relative_to(PROJECT_ROOT)}: {reason}, downloading…")
-    snapshot_download(
-        repo_id=spec["repo"],
-        local_dir=model_dir,
-        allow_patterns=spec["files"],
-    )
-    print(f"[{spec['repo']}] done.")
+    reason = "forced refresh" if force else f"missing {', '.join(missing)}"
+    print(f"[{repo}] {spec['dir']}: {reason}, downloading…")
+    for fname in spec["files"]:
+        if (model_dir / fname).is_file() and not force:
+            continue
+        _download_file(repo, fname, model_dir / fname)
+    print(f"[{repo}] {spec['dir']}: done.")
+
+
+def _download_file(repo: str, fname: str, dest: Path) -> None:
+    """Download a single known file, direct then mirror, with resume."""
+    errors: list[str] = []
+    for endpoint in _endpoints():
+        url = f"{endpoint}/{repo}/resolve/main/{fname}"
+        try:
+            _stream_download(url, dest)
+            print(f"    {fname}: ok")
+            return
+        except Exception as exc:  # noqa: BLE001 — report and try next endpoint
+            errors.append(f"{endpoint}: {exc.__class__.__name__}")
+            _truncate_partial(dest)
+    raise RuntimeError(f"failed to download {repo}/{fname} ({', '.join(errors)})")
+
+
+def _endpoints():
+    """Direct first, then mirror — skip the mirror if HF_ENDPOINT already pins it."""
+    if os.environ.get("HF_ENDPOINT", "").strip():
+        return [MIRROR_ENDPOINT]
+    return [DIRECT_ENDPOINT, MIRROR_ENDPOINT]
+
+
+def _stream_download(url: str, dest: Path, *, retries: int = 3) -> None:
+    """Stream *url* to *dest*, resuming an existing partial file via Range."""
+    for attempt in range(retries):
+        existing = dest.stat().st_size if dest.is_file() else 0
+        headers = {"User-Agent": "chitrika/1.0"}
+        if existing:
+            headers["Range"] = f"bytes={existing}-"
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                # Server answered 200 instead of 206 — restart from scratch.
+                if existing and resp.status == 200:
+                    existing = 0
+                    dest.unlink(missing_ok=True)
+                mode = "ab" if existing else "wb"
+                with open(dest, mode) as fh:
+                    while True:
+                        chunk = resp.read(_CHUNK)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                return
+        except urllib.error.HTTPError as exc:
+            if exc.code == 416:  # range not satisfiable → file already complete
+                return
+            if attempt == retries - 1:
+                raise
+        except OSError:
+            if attempt == retries - 1:
+                raise
+    # Unreachable; loop returns or raises on its last iteration.
+
+
+def _truncate_partial(dest: Path) -> None:
+    """Drop a corrupt partial file so the next endpoint starts cleanly."""
+    try:
+        if dest.is_file():
+            dest.unlink()
+    except OSError:
+        pass
 
 
 def main() -> None:
-    global args
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--emotion-repo",
-        default=DEFAULT_EMOTION_REPO,
-        help="HF repo for the emotion ONNX model (default: %(default)s)",
+        default=None,
+        help=f"HF repo for the emotion ONNX model (default: {DEFAULT_EMOTION_REPO})",
     )
     parser.add_argument(
         "--embedding-repo",
-        default=DEFAULT_EMBEDDING_REPO,
-        help="HF repo for the embedding ONNX model (default: %(default)s)",
+        default=None,
+        help=f"HF repo for the embedding ONNX model (default: {DEFAULT_EMBEDDING_REPO})",
     )
     parser.add_argument(
         "--force",
@@ -112,12 +184,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    MODEL_SPECS["emotion"]["repo"] = args.emotion_repo
-    MODEL_SPECS["embedding"]["repo"] = args.embedding_repo
-
-    _ensure_huggingface_hub()
-    for spec in MODEL_SPECS.values():
-        _download(spec)
+    try:
+        ensure_models(
+            force=args.force,
+            emotion_repo=args.emotion_repo,
+            embedding_repo=args.embedding_repo,
+        )
+    except RuntimeError as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
