@@ -36,16 +36,26 @@ _EMOJI_RE = re.compile(
 def _normalize_tts_text(text: str) -> str:
     """Clean assistant text for synthesis and guarantee a sentence boundary.
 
-    GPT-SoVITS anchors prosody and pauses on punctuation. A bare short reply
-    (e.g. "嗯", "好") carries no boundary, so the model produces a rushed, flat,
-    cut-off utterance. Stripping markdown/emoji also prevents garbage syllables.
+    GPT-SoVITS anchors prosody and pauses on punctuation. Two failure modes are
+    avoided here:
+
+    - A bare short reply (e.g. "嗯", "好") carries no boundary, so the model
+      produces a rushed, flat, cut-off utterance → guarantee a final ``。``.
+    - Line breaks are converted to ``，`` rather than stripped: GPT-SoVITS's
+      zh cleaner *removes* plain spaces (phrases run together with no pause),
+      while commas survive as explicit pause tokens.
+
+    Stripping markdown/emoji also prevents garbage syllables.
     """
     text = (text or "").strip()
     if not text:
         return text
     text = _MARKDOWN_RE.sub("", text)
     text = _EMOJI_RE.sub("", text)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    text = text.replace("\r", "").replace("\n", "，")
+    text = re.sub(r"\s*，\s*", "，", text)
+    text = re.sub(r"[，]{2,}", "，", text).strip("，")
     if text and text[-1] not in _SENTENCE_END_CHARS:
         text += "。"
     return text

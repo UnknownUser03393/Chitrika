@@ -29,8 +29,11 @@ def test_normalize_tts_text_strips_markdown_and_emoji():
     assert _normalize_tts_text("哈哈😄") == "哈哈。"
 
 
-def test_normalize_tts_text_collapses_whitespace():
-    assert _normalize_tts_text("今天\n  天气 不错") == "今天 天气 不错。"
+def test_normalize_tts_text_converts_newlines_to_commas():
+    """Line breaks become commas so GPT-SoVITS keeps pause anchors
+    (plain spaces are stripped by its zh cleaner → run-on speech)."""
+    assert _normalize_tts_text("今天\n  天气 不错") == "今天，天气 不错。"
+    assert _normalize_tts_text("好\n\n好的\n行") == "好，好的，行。"
 
 
 def test_normalize_tts_text_handles_empty():
