@@ -10,6 +10,10 @@ Usage:
     CHITRIKA_EMOTION_MODEL_REPO=your-user/emotion-onnx \\
     CHITRIKA_EMBEDDING_MODEL_REPO=your-user/embedding-onnx \\
     uv run python scripts/download_models.py
+
+For users in mainland China, Hugging Face is often slow/blocked. Use the
+official mirror by setting HF_ENDPOINT (huggingface_hub reads it automatically):
+    HF_ENDPOINT=https://hf-mirror.com uv run python scripts/download_models.py
 """
 
 from __future__ import annotations
@@ -24,10 +28,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Set your own repo ids via env or CLI args. The defaults match the upstream
 # Chitrika repos; change them if you forked or made the repos private.
 DEFAULT_EMOTION_REPO = os.environ.get(
-    "CHITRIKA_EMOTION_MODEL_REPO", "chitrika/emotion-onnx"
+    "CHITRIKA_EMOTION_MODEL_REPO", "NeatAvocado14/emotion-onnx"
 )
 DEFAULT_EMBEDDING_REPO = os.environ.get(
-    "CHITRIKA_EMBEDDING_MODEL_REPO", "chitrika/embedding-onnx"
+    "CHITRIKA_EMBEDDING_MODEL_REPO", "NeatAvocado14/embedding-onnx"
 )
 
 # Required files per model dir. If any are missing the whole dir is refreshed.
