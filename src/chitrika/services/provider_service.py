@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
+from typing import Any
 
 from sqlmodel import Session, select
 
 from src.chitrika.models.provider import LLMProvider, LLMProviderModel
+from src.chitrika.plugins.api import ProviderContext, ProviderSpec
+from src.chitrika.repositories.plugin_state_repository import PluginStateRepository
+from src.chitrika.services.plugin_runtime import (
+    PluginError,
+    PluginInvoker,
+    get_plugin_registry,
+)
 
 logger = logging.getLogger("chitrika.providers")
 
@@ -78,20 +87,154 @@ def resolve_provider_for_character(
 # ---------------------------------------------------------------------------
 
 
-def create_llm_client(api_key: str, base_url: str):
-    """Create an OpenAIClient from provider config.
+def list_provider_types(session: Session) -> list[dict]:
+    """Return built-in and plugin-backed provider types for the settings UI.
 
-    Returns None if the API key is empty.
+    Each plugin-backed entry also carries the plugin's declared operation-panel
+    API (``plugin_api``) when the plugin is enabled and exposes one.
     """
-    if not api_key:
+    from src.chitrika.schemas.provider_schemas import (
+        PluginAPIResponse,
+        PluginEndpointResponse,
+    )
+
+    builtins = [
+        ProviderSpec(
+            type="openai",
+            label="OpenAI-Compatible",
+            plugin_id=None,
+            needs_api_key=True,
+            needs_base_url=True,
+            supports_model_fetch=True,
+        )
+    ]
+    invoker = PluginInvoker(PluginStateRepository(session), get_plugin_registry())
+    plugin_specs = invoker.list_provider_specs()
+
+    results: list[dict] = []
+    for spec in [*builtins, *plugin_specs]:
+        data = asdict(spec)
+        plugin_api = None
+        if spec.plugin_id:
+            api = invoker.get_api(spec.plugin_id)
+            if api is not None:
+                plugin_api = PluginAPIResponse(
+                    endpoints=[
+                        PluginEndpointResponse(**asdict(endpoint))
+                        for endpoint in api.endpoints
+                    ]
+                )
+        data["plugin_api"] = plugin_api
+        results.append(data)
+    return results
+
+
+def create_llm_client(session: Session, provider: LLMProvider):
+    """Create an LLM client for either a built-in or plugin-backed provider."""
+    if provider.provider_type == "openai":
+        return _create_openai_client(provider)
+
+    if not provider.plugin_id:
+        logger.error(
+            "Provider '%s' uses '%s' but has no plugin_id",
+            provider.name,
+            provider.provider_type,
+        )
+        return None
+
+    try:
+        spec = _get_plugin_provider_spec(session, provider)
+        context = _build_plugin_provider_context(provider)
+        if spec is not None and spec.needs_api_key and not context.api_key:
+            return None
+
+        factory = PluginInvoker(
+            PluginStateRepository(session), get_plugin_registry()
+        ).get_provider_factory(
+            provider.plugin_id,
+            provider.provider_type,
+        )
+        return factory(context)
+    except PluginError:
+        logger.exception("Failed to create plugin-backed LLM client")
+        return None
+    except Exception as exc:
+        # Let auth / config errors surface in chat instead of silent echo mode.
+        from src.llmproviders.LLMProvider import AuthenticationError, LLMError
+
+        if isinstance(exc, (AuthenticationError, LLMError)):
+            raise
+        logger.exception("Provider plugin factory crashed")
+        return None
+
+
+def _create_openai_client(provider: LLMProvider):
+    if not provider.api_key:
         return None
     try:
         from src.llmproviders.OpenAIProvider import OpenAIClient
 
-        return OpenAIClient(apiKey=api_key, baseUrl=base_url)
+        return OpenAIClient(apiKey=provider.api_key, baseUrl=provider.base_url)
     except Exception:
         logger.exception("Failed to create LLM client")
         return None
+
+
+def _build_plugin_provider_context(provider: LLMProvider) -> ProviderContext:
+    config = dict(provider.custom_config or {})
+    api_key = _resolve_provider_config_value(config, "api_key", provider.api_key)
+    base_url = _resolve_provider_config_value(config, "base_url", provider.base_url)
+    default_model = _resolve_provider_config_value(
+        config,
+        "default_model",
+        provider.default_model,
+    )
+
+    normalized_config: dict[str, Any] = dict(config)
+    if api_key:
+        normalized_config["api_key"] = api_key
+    if base_url:
+        normalized_config["base_url"] = base_url
+    if default_model:
+        normalized_config["default_model"] = default_model
+
+    return ProviderContext(
+        provider_id=provider.id,
+        provider_name=provider.name,
+        display_name=provider.display_name,
+        api_key=api_key,
+        base_url=base_url,
+        default_model=default_model,
+        plugin_id=provider.plugin_id,
+        settings={},
+        config=normalized_config,
+    )
+
+
+
+def _resolve_provider_config_value(
+    config: dict[str, Any],
+    key: str,
+    fallback: str,
+) -> str:
+    value = config.get(key)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            return stripped
+    return fallback.strip()
+
+
+
+def _get_plugin_provider_spec(
+    session: Session,
+    provider: LLMProvider,
+) -> ProviderSpec | None:
+    invoker = PluginInvoker(PluginStateRepository(session), get_plugin_registry())
+    for spec in invoker.list_provider_specs():
+        if spec.plugin_id == provider.plugin_id and spec.type == provider.provider_type:
+            return spec
+    return None
 
 
 def provider_model_names(provider: LLMProvider) -> list[str]:

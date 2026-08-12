@@ -23,3 +23,20 @@ src/frontend/node_modules/
 src/frontend/dist/
 src/frontend/vite-dev*.log
 skill_0624.txt
+
+# Local model artifacts (download-only, not source)
+models/
+MEC/
+paraphrase-multilingual-MiniLM-L12-v2/
+
+# Plugin runtime artifacts (auth state, binaries)
+plugins/*/data/
+*.exe
+
+# Packaging / build artifacts (regenerable, never commit)
+release/
+dist_backend/
+build_backend/
+release_build.log
+*.db.pre-*.bak
+count_lines.py

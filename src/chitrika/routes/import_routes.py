@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from src.chitrika.database import get_session
+from src.chitrika.database import get_transactional_session
 from src.chitrika.models.character import Character
 from src.chitrika.models.conversation import Conversation
 from src.chitrika.models.emotion import EmotionState
@@ -30,7 +30,7 @@ def _ts(secs: float) -> datetime:
 @router.post("/import/doubao")
 def import_doubao(
     body: DoubaoImportRequest,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Import Doubao conversation history from an agentmsg-shify export directory."""
     source = Path(body.source_path)
@@ -113,7 +113,7 @@ def import_doubao(
             session.add(chitrika_conv)
             imported_convs += 1
 
-    session.commit()
+    session.flush()
 
     return {
         "imported_characters": imported_chars,

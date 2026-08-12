@@ -20,6 +20,14 @@ class AppSettings(BaseModel):
         default=0.6, ge=0.0, le=1.0,
         description="Loneliness score that triggers proactive messaging",
     )
+    memory_llm_extraction: bool = Field(
+        default=False,
+        description="Use the LLM to extract durable user facts (costs tokens per message)",
+    )
+    memory_episodic_summary: bool = Field(
+        default=False,
+        description="Compress short-term chatter into episodic narrative memories (costs tokens)",
+    )
 
 
 class AppSettingsUpdate(BaseModel):
@@ -34,3 +42,5 @@ class AppSettingsUpdate(BaseModel):
     loneliness_threshold: float | None = Field(
         default=None, ge=0.0, le=1.0,
     )
+    memory_llm_extraction: bool | None = Field(default=None)
+    memory_episodic_summary: bool | None = Field(default=None)

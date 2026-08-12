@@ -30,7 +30,7 @@ import src.chitrika.models.settings  # noqa: F401, E402
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def test_engine():
     """Session-scoped in-memory SQLite with StaticPool.
 
@@ -41,8 +41,12 @@ def test_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    from src.chitrika.database import configure_sqlite_engine
+
+    configure_sqlite_engine(eng)
     SQLModel.metadata.create_all(eng)
-    return eng
+    yield eng
+    eng.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -52,16 +56,13 @@ def test_engine():
 
 @pytest.fixture
 def session(test_engine) -> Generator[Session, None, None]:
-    """A session that wraps each test in a transaction, rolled back after."""
-    connection = test_engine.connect()
-    transaction = connection.begin()
-    sess = Session(bind=connection)
+    """A session on the per-test database shared by short-lived app sessions."""
+    sess = Session(test_engine)
 
     yield sess
 
+    sess.rollback()
     sess.close()
-    transaction.rollback()
-    connection.close()
 
 
 # ---------------------------------------------------------------------------
@@ -74,17 +75,18 @@ def _patch_app(monkeypatch):
     """Force in-memory SQLite and disable heartbeat during tests."""
     monkeypatch.setattr(config, "database_url", "sqlite:///:memory:")
     monkeypatch.setattr(config, "emotion_debug_panel", False)
+    monkeypatch.setattr(config, "api_token", "test-api-token")
 
-    # Prevent the heartbeat engine from actually starting its scheduler
+    # Prevent the heartbeat scheduler from actually starting its worker thread
     def _noop_start(self):
         self._running = True
 
     monkeypatch.setattr(
-        "src.chitrika.engines.heartbeat_engine.HeartbeatEngine.start",
+        "src.chitrika.services.heartbeat_scheduler.HeartbeatScheduler.start",
         _noop_start,
     )
     monkeypatch.setattr(
-        "src.chitrika.engines.heartbeat_engine.HeartbeatEngine.stop",
+        "src.chitrika.services.heartbeat_scheduler.HeartbeatScheduler.stop",
         lambda self: None,
     )
 
@@ -120,7 +122,10 @@ def client(test_engine, session) -> Generator[TestClient, None, None]:
 
     app.dependency_overrides[database.get_session] = _override_get_session
 
-    with TestClient(app) as tc:
+    with TestClient(
+        app,
+        headers={"Authorization": "Bearer test-api-token"},
+    ) as tc:
         yield tc
 
     # Restore

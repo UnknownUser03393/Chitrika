@@ -5,9 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
-from src.chitrika.database import get_session
-from src.chitrika.engines.memory_engine import MemoryEngine
+from src.chitrika.database import get_session, get_transactional_session
 from src.chitrika.models.memory import Memory
+from src.chitrika.repositories.memory_repository import MemoryRepository
+from src.chitrika.services.memory_lifecycle_service import MemoryLifecycleService
+from src.chitrika.services.memory_retrieval_service import MemoryRetrievalService
 from src.chitrika.schemas.memory_schemas import (
     MemoryCreate,
     MemoryListResponse,
@@ -35,8 +37,8 @@ def list_memories(
     session: Session = Depends(get_session),
 ) -> dict:
     """List memories for a character, ordered by importance."""
-    engine = MemoryEngine(session)
-    memories = engine.get_relevant(
+    service = MemoryRetrievalService(MemoryRepository(session))
+    memories = service.get_relevant(
         character_id,
         memory_type=memory_type,
         limit=limit,
@@ -64,8 +66,8 @@ def search_memories(
     session: Session = Depends(get_session),
 ) -> dict:
     """Full-text search across memory content."""
-    engine = MemoryEngine(session)
-    memories = engine.search(character_id, q, limit=limit)
+    service = MemoryRetrievalService(MemoryRepository(session))
+    memories = service.search(character_id, q, limit=limit)
     return {
         "memories": [MemoryResponse.model_validate(m) for m in memories],
         "total": len(memories),
@@ -84,11 +86,11 @@ def search_memories(
 def create_memory(
     character_id: str,
     body: MemoryCreate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> Memory:
     """Manually create a memory for a character."""
-    engine = MemoryEngine(session)
-    return engine.store(
+    service = MemoryLifecycleService(MemoryRepository(session))
+    return service.store(
         character_id=character_id,
         memory_type=body.memory_type,
         content=body.content,
@@ -109,11 +111,11 @@ def create_memory(
 def update_memory(
     memory_id: str,
     body: MemoryUpdate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> Memory:
     """Update a memory: pin, change importance, edit content, or forget."""
-    engine = MemoryEngine(session)
-    updated = engine.update(
+    service = MemoryLifecycleService(MemoryRepository(session))
+    updated = service.update(
         memory_id,
         content=body.content,
         importance=body.importance,
@@ -132,16 +134,16 @@ def update_memory(
 @router.delete("/memories/{memory_id}", status_code=204)
 def delete_memory(
     memory_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> None:
     """Permanently delete a memory.
 
     Soft-forgetting is handled through PATCH /api/memories/{id} with
     {"is_forgotten": true}; this endpoint is intentionally destructive.
     """
-    engine = MemoryEngine(session)
-    memory = engine.get_by_id(memory_id)
+    repository = MemoryRepository(session)
+    memory = repository.get(memory_id)
     if memory is None:
         raise HTTPException(status_code=404, detail="Memory not found")
-    session.delete(memory)
-    session.commit()
+    repository.delete(memory)
+    session.flush()

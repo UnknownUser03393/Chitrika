@@ -1,34 +1,27 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   ArrowLeft,
   Moon,
   Sun,
   Globe,
-  Type,
-  CornerDownLeft,
-  Bell,
-  Clock,
   Trash2,
-  ChevronRight,
   Cpu,
   Plus,
   Pencil,
-  Zap,
   Eye,
   EyeOff,
   Sliders,
-  Heart,
-  Activity,
-  Gauge,
   Brain,
   Puzzle,
-  RefreshCw,
   Bug,
+  LayoutGrid,
+  Check,
+  Palette,
+  Copy,
+  Volume2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
-import * as Switch from "@radix-ui/react-switch";
-import * as SliderPrimitive from "@radix-ui/react-slider";
 import type { AIModel } from "./mockData";
 import {
   fetchCharacters,
@@ -43,16 +36,33 @@ import {
   fetchSettings,
   updateSettings,
   fetchPlugins,
-  updatePlugin,
-  rescanPlugins,
+  fetchProviderTypes,
 } from "../services/api";
-import type { Character, LLMProvider, LLMProviderCreate, LLMProviderUpdate, AppSettings, PluginInfo } from "../services/api";
+import type {
+  Character,
+  LLMProvider,
+  LLMProviderCreate,
+  LLMProviderUpdate,
+  AppSettings,
+  PluginInfo,
+  ProviderType,
+} from "../services/api";
 import { CharacterForm } from "./CharacterForm";
 import { ProviderForm } from "./ProviderForm";
+import { PluginPanel } from "./PluginPanel";
 import { CompanionMindView } from "./CompanionMindView";
 import { DebugPanel } from "./DebugPanel";
-import { themes } from "../preferences";
-import type { Preferences, ThemeId } from "../preferences";
+import type { Preferences } from "../preferences";
+import { builtinThemes, type Theme } from "../themes";
+import { ThemeEditor, ThemePreview } from "./ThemeEditor";
+import {
+  NavItem,
+  SectionLabel,
+  SwitchToggle,
+} from "./settings/SettingsControls";
+import { AppSettingsPanel } from "./settings/AppSettingsPanel";
+import { PreferencesSettings } from "./settings/PreferencesSettings";
+import { PluginSettings } from "./settings/PluginSettings";
 
 interface Props {
   onBack: () => void;
@@ -60,14 +70,14 @@ interface Props {
   prefs: Preferences;
   setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
 }
-
-type Category = "main" | "preferences" | "provider" | "models" | "mind" | "app" | "plugins" | "debug";
+type Category = "main" | "theme" | "preferences" | "tts" | "provider" | "models" | "mind" | "app" | "plugins" | "debug";
 
 export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   const [category, setCategory] = useState<Category>("main");
   const [models, setModels] = useState<AIModel[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [providers, setProviders] = useState<LLMProvider[]>([]);
+  const [providerTypes, setProviderTypes] = useState<ProviderType[]>([]);
   const [loading, setLoading] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -79,13 +89,15 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
     Promise.all([
       fetchCharacters(),
       fetchProviders(),
+      fetchProviderTypes().catch(() => []),
       fetchSettings().catch(() => null),
       fetchPlugins().catch(() => []),
     ])
-      .then(([chars, provs, settings, discoveredPlugins]) => {
+      .then(([chars, provs, types, settings, discoveredPlugins]) => {
         setCharacters(chars);
         setModels(chars.map(characterToModel));
         setProviders(provs);
+        setProviderTypes(types);
         if (settings) setAppSettings(settings);
         setPlugins(discoveredPlugins);
         setLoading(false);
@@ -220,24 +232,6 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
     setCategory(cat);
   };
 
-  const handlePluginToggle = async (id: string, enabled: boolean) => {
-    try {
-      const updated = await updatePlugin(id, enabled);
-      setPlugins((current) => current.map((item) => item.id === id ? updated : item));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to update plugin");
-    }
-  };
-
-  const handlePluginRescan = async () => {
-    try {
-      setPlugins(await rescanPlugins());
-      toast.success("Plugin directory rescanned");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to rescan plugins");
-    }
-  };
-
   const handleBack = () => {
     showForm?.(null);
     if (category === "main") {
@@ -250,8 +244,12 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   const headerTitle =
     category === "main"
       ? "Settings"
+      : category === "theme"
+      ? "Theme"
       : category === "preferences"
       ? "Preferences"
+      : category === "tts"
+      ? "Text to Speech"
       : category === "provider"
       ? "LLM Provider"
       : category === "models"
@@ -294,7 +292,9 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
               className="w-full overflow-x-hidden"
             >
               <MainSettings
+                onTheme={() => navigateTo("theme")}
                 onPreferences={() => navigateTo("preferences")}
+                onTTS={() => navigateTo("tts")}
                 onProvider={() => navigateTo("provider")}
                 onModels={() => navigateTo("models")}
                 onMind={() => navigateTo("mind")}
@@ -302,6 +302,18 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
                 onPlugins={() => navigateTo("plugins")}
                 onDebug={() => navigateTo("debug")}
               />
+            </motion.div>
+          )}
+          {category === "theme" && (
+            <motion.div
+              key="theme"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="w-full overflow-x-hidden"
+            >
+              <ThemeSettings prefs={prefs} setPref={setPref} showForm={showForm} />
             </motion.div>
           )}
           {category === "preferences" && (
@@ -313,7 +325,19 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
               transition={{ duration: 0.12, ease: "easeOut" }}
               className="w-full overflow-x-hidden"
             >
-              <PreferencesSettings prefs={prefs} setPref={setPref} />
+              <PreferencesSettings prefs={prefs} setPref={setPref} mode="preferences" />
+            </motion.div>
+          )}
+          {category === "tts" && (
+            <motion.div
+              key="tts"
+              initial={{ x: 20, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 20, opacity: 0 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="w-full overflow-x-hidden"
+            >
+              <PreferencesSettings prefs={prefs} setPref={setPref} mode="tts" />
             </motion.div>
           )}
           {category === "provider" && (
@@ -327,6 +351,7 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
             >
               <ProviderSettings
                 providers={providers}
+                providerTypes={providerTypes}
                 onCreate={handleCreateProvider}
                 onUpdate={handleUpdateProvider}
                 onDelete={handleDeleteProvider}
@@ -411,8 +436,8 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
             >
               <PluginSettings
                 plugins={plugins}
-                onToggle={handlePluginToggle}
-                onRescan={handlePluginRescan}
+                onPluginsChange={setPlugins}
+                showForm={showForm}
               />
             </motion.div>
           )}
@@ -434,132 +459,12 @@ export function SettingsView({ onBack, showForm, prefs, setPref }: Props) {
   );
 }
 
-/* -- Shared primitives ------------------------------------------- */
-
-function SectionLabel({ label, color = "var(--app-accent)" }: { label: string; color?: string }) {
-  return (
-    <div className="px-3 py-1.5">
-      <span
-        style={{
-          fontSize: "11px",
-          fontWeight: 700,
-          letterSpacing: "0.8px",
-          textTransform: "uppercase",
-          color,
-        }}
-      >
-        {label}
-      </span>
-    </div>
-  );
-}
-
-function NavItem({
-  icon,
-  label,
-  sublabel,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  sublabel?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5 transition-colors text-left"
-    >
-      {icon}
-      <div className="flex-1 min-w-0">
-        <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-          {label}
-        </div>
-        {sublabel && (
-          <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-            {sublabel}
-          </div>
-        )}
-      </div>
-      <ChevronRight size={16} className="text-[var(--app-muted)]" />
-    </button>
-  );
-}
-
-function SwitchToggle({
-  checked,
-  onCheckedChange,
-}: {
-  checked: boolean;
-  onCheckedChange: (v: boolean) => void;
-}) {
-  return (
-    <Switch.Root
-      checked={checked}
-      onCheckedChange={onCheckedChange}
-      className="relative inline-flex cursor-pointer rounded-full outline-none shrink-0 transition-colors"
-      style={{ width: "36px", height: "20px", background: checked ? "var(--app-accent)" : "var(--app-border)" }}
-    >
-      <Switch.Thumb
-        className="block rounded-full bg-white shadow-sm transition-transform"
-        style={{
-          width: "16px",
-          height: "16px",
-          marginTop: "2px",
-          transform: checked ? "translateX(18px)" : "translateX(2px)",
-        }}
-      />
-    </Switch.Root>
-  );
-}
-
-function AppSlider({
-  value,
-  min = 0,
-  max = 1,
-  step = 0.01,
-  onValueChange,
-}: {
-  value: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  onValueChange: (value: number) => void;
-}) {
-  return (
-    <SliderPrimitive.Root
-      value={[value]}
-      min={min}
-      max={max}
-      step={step}
-      onValueChange={([next]) => onValueChange(next)}
-      className="relative flex h-5 w-full flex-1 touch-none select-none items-center"
-    >
-      <SliderPrimitive.Track
-        className="relative h-1.5 grow overflow-hidden rounded-full"
-        style={{ background: "var(--app-border)" }}
-      >
-        <SliderPrimitive.Range
-          className="absolute h-full rounded-full"
-          style={{ background: "var(--app-accent)" }}
-        />
-      </SliderPrimitive.Track>
-      <SliderPrimitive.Thumb
-        className="block size-[18px] shrink-0 rounded-full outline-none transition-transform hover:scale-110"
-        style={{
-          background: "#fff",
-          border: "2.5px solid var(--app-accent)",
-          boxShadow: "0 1px 5px rgba(0,0,0,0.22)",
-        }}
-      />
-    </SliderPrimitive.Root>
-  );
-}
-
 /* -- Main settings ----------------------------------------------- */
 
 function MainSettings({
+  onTheme,
   onPreferences,
+  onTTS,
   onProvider,
   onModels,
   onMind,
@@ -567,7 +472,9 @@ function MainSettings({
   onPlugins,
   onDebug,
 }: {
+  onTheme: () => void;
   onPreferences: () => void;
+  onTTS: () => void;
   onProvider: () => void;
   onModels: () => void;
   onMind: () => void;
@@ -605,14 +512,40 @@ function MainSettings({
           icon={
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "var(--app-accent-soft)" }}
+            >
+              <Palette size={16} className="text-[var(--app-accent)]" />
+            </div>
+          }
+          label="Theme"
+          sublabel="Pick, create, and share themes"
+          onClick={onTheme}
+        />
+        <NavItem
+          icon={
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
               style={{ background: "rgba(79,163,227,0.15)" }}
             >
               <Moon size={16} className="text-[var(--app-accent)]" />
             </div>
           }
           label="Preferences"
-          sublabel="Theme, font, messaging"
+          sublabel="Font, messaging, notifications"
           onClick={onPreferences}
+        />
+        <NavItem
+          icon={
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: "rgba(34,197,94,0.15)" }}
+            >
+              <Volume2 size={16} style={{ color: "#22C55E" }} />
+            </div>
+          }
+          label="Text to Speech"
+          sublabel="Voice provider, model, and playback"
+          onClick={onTTS}
         />
         <NavItem
           icon={
@@ -711,77 +644,6 @@ function MainSettings({
   );
 }
 
-function PluginSettings({
-  plugins,
-  onToggle,
-  onRescan,
-}: {
-  plugins: PluginInfo[];
-  onToggle: (id: string, enabled: boolean) => Promise<void>;
-  onRescan: () => Promise<void>;
-}) {
-  return (
-    <div className="py-2 px-2 space-y-1">
-      <div className="flex items-center justify-between pr-2">
-        <SectionLabel label={`Local plugins (${plugins.length})`} />
-        <button
-          onClick={() => void onRescan()}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[var(--app-muted)] hover:text-[var(--app-text)] hover:bg-white/5"
-          style={{ fontSize: "12px" }}
-        >
-          <RefreshCw size={13} />
-          Rescan
-        </button>
-      </div>
-
-      {plugins.length === 0 ? (
-        <div className="px-4 py-10 text-center">
-          <Puzzle size={28} className="mx-auto mb-3 text-[var(--app-muted)]" />
-          <p className="text-[var(--app-text)] text-sm font-medium">No plugins found</p>
-          <p className="mt-1 text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-            Add a plugin folder under the configured plugins directory, then rescan.
-          </p>
-        </div>
-      ) : plugins.map((plugin) => (
-        <div
-          key={plugin.id}
-          className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5"
-          style={{ opacity: plugin.available ? 1 : 0.55 }}
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-sky-500/10 shrink-0">
-              <Puzzle size={17} className="text-sky-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[var(--app-text)] text-sm font-semibold">{plugin.name}</span>
-                <span className="text-[var(--app-muted)]" style={{ fontSize: "10px" }}>v{plugin.version}</span>
-              </div>
-              <p className="truncate text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-                {plugin.description || plugin.id}
-              </p>
-            </div>
-            <SwitchToggle
-              checked={plugin.enabled && plugin.available}
-              onCheckedChange={(value) => void onToggle(plugin.id, value)}
-            />
-          </div>
-          {!plugin.available && (
-            <p className="mt-2 text-amber-400" style={{ fontSize: "11px" }}>Plugin files are missing.</p>
-          )}
-          {plugin.load_error && (
-            <p className="mt-2 break-words text-red-400" style={{ fontSize: "11px" }}>{plugin.load_error}</p>
-          )}
-        </div>
-      ))}
-
-      <p className="px-3 pt-3 text-[var(--app-muted)]" style={{ fontSize: "11px", lineHeight: 1.5 }}>
-        Local plugins execute trusted Python code inside Chitrika. Only enable plugins you trust.
-      </p>
-    </div>
-  );
-}
-
 function CompanionMindSettings({
   characters,
   showForm,
@@ -821,237 +683,159 @@ function CompanionMindSettings({
   );
 }
 
-/* -- Preferences ------------------------------------------------- */
+/* -- Theme ------------------------------------------------------- */
 
-function PreferencesSettings({
+function ThemeSettings({
   prefs,
   setPref,
+  showForm,
 }: {
   prefs: Preferences;
   setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
+  showForm?: (form: React.ReactNode | null) => void;
 }) {
-  const activeTheme = themes.find((theme) => theme.id === prefs.theme);
-  const themeDescriptions: Record<ThemeId, string> = {
-    midnight: "Dark blue with a warmer accent",
-    graphite: "Neutral dark with a softer green accent",
-    dawn: "Light theme with warm contrast",
-  };
-  const fontSizeOptions = [
-    {
-      value: "Small",
-      label: "Small",
-      sample: "Compact",
-      description: "Tighter spacing and denser reading",
-      previewSize: "12px",
-    },
-    {
-      value: "Medium",
-      label: "Medium",
-      sample: "Balanced",
-      description: "Default size for everyday chat",
-      previewSize: "14px",
-    },
-    {
-      value: "Large",
-      label: "Large",
-      sample: "Comfortable",
-      description: "Bigger text and easier scanning",
-      previewSize: "16px",
-    },
-  ] as const;
-
   return (
     <div className="py-2 px-2 space-y-1.5">
-      <SectionLabel label="Appearance" />
-
-      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
-        <div className="flex items-start gap-3">
-          {prefs.theme === "dawn" ? (
-            <Sun size={18} className="text-[var(--app-muted)] shrink-0 mt-0.5" />
-          ) : (
-            <Moon size={18} className="text-[var(--app-muted)] shrink-0 mt-0.5" />
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-              Theme
-            </div>
-            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-              {activeTheme?.label}
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          {themes.map((theme) => {
-            const selected = prefs.theme === theme.id;
-            const ThemeIcon = theme.id === "dawn" ? Sun : Moon;
-
-            return (
-              <button
-                key={theme.id}
-                onClick={() => setPref("theme", theme.id)}
-                className="w-full flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors"
-                style={{
-                  background: selected
-                    ? "color-mix(in srgb, var(--app-accent) 10%, var(--app-elevated))"
-                    : "var(--app-elevated)",
-                  borderColor: selected ? "var(--app-accent)" : "transparent",
-                }}
-                title={theme.label}
-              >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-black/10">
-                  <ThemeIcon size={16} className="text-[var(--app-text)]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 600 }}>
-                    {theme.label}
-                  </span>
-                  <div className="text-[var(--app-muted)] mt-0.5" style={{ fontSize: "12px", lineHeight: 1.45 }}>
-                    {themeDescriptions[theme.id]}
-                  </div>
-                </div>
-                <span className="flex h-9 w-16 overflow-hidden rounded-xl shrink-0 border border-white/5">
-                  {theme.colors.map((color) => (
-                    <span key={color} className="flex-1" style={{ background: color }} />
-                  ))}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      <SectionLabel label={`Themes (${builtinThemes.length + prefs.customThemes.length})`} />
+      <div className="px-1">
+        <ThemeGrid prefs={prefs} setPref={setPref} showForm={showForm} />
       </div>
+      <p className="px-3 pt-2 text-[var(--app-subtle)]" style={{ fontSize: "11px", lineHeight: 1.5 }}>
+        Tap a theme to apply it instantly. Create your own from three colors, then copy its code to share — or paste a code to import one.
+      </p>
+    </div>
+  );
+}
 
-      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
-        <div className="flex items-center gap-3">
-          <Type size={18} className="text-[var(--app-muted)] shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-              Font Size
-            </div>
-            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-              {prefs.fontSize}
-            </div>
-          </div>
-        </div>
+/* -- Preferences ------------------------------------------------- */
 
-        <div className="space-y-2">
-          {fontSizeOptions.map((option) => {
-            const selected = prefs.fontSize === option.value;
+function ThemeGrid({
+  prefs,
+  setPref,
+  showForm,
+}: {
+  prefs: Preferences;
+  setPref: <K extends keyof Preferences>(key: K, value: Preferences[K]) => void;
+  showForm?: (form: React.ReactNode | null) => void;
+}) {
+  const custom = prefs.customThemes;
+  const all = [...builtinThemes, ...custom];
 
-            return (
-              <button
-                key={option.value}
-                onClick={() => setPref("fontSize", option.value)}
-                className="w-full flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors"
-                style={{
-                  background: selected
-                    ? "color-mix(in srgb, var(--app-accent) 10%, var(--app-elevated))"
-                    : "var(--app-elevated)",
-                  borderColor: selected ? "var(--app-accent)" : "transparent",
-                }}
-              >
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                  style={{
-                    background: selected ? "color-mix(in srgb, var(--app-accent) 16%, transparent)" : "rgba(255,255,255,0.04)",
-                    color: selected ? "var(--app-accent)" : "var(--app-text)",
-                    fontSize: option.previewSize,
-                    fontWeight: 700,
-                  }}
-                >
-                  Aa
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 600 }}>
-                      {option.label}
-                    </span>
-                    <span className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-                      {option.sample}
-                    </span>
-                  </div>
-                  <div className="text-[var(--app-muted)] mt-0.5" style={{ fontSize: "12px", lineHeight: 1.45 }}>
-                    {option.description}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+  const openEditor = (initial: Theme | null, duplicate = false) => {
+    const editable = initial && !initial.builtin && !duplicate;
+    showForm?.(
+      <ThemeEditor
+        initial={initial}
+        duplicate={duplicate}
+        onClose={() => showForm?.(null)}
+        onDelete={
+          editable
+            ? () => {
+                setPref("customThemes", custom.filter((t) => t.id !== initial!.id));
+                if (prefs.theme === initial!.id) setPref("theme", "midnight");
+                showForm?.(null);
+              }
+            : undefined
+        }
+        onSubmit={(theme) => {
+          const exists = custom.some((t) => t.id === theme.id);
+          setPref(
+            "customThemes",
+            exists ? custom.map((t) => (t.id === theme.id ? theme : t)) : [...custom, theme],
+          );
+          setPref("theme", theme.id);
+          showForm?.(null);
+        }}
+      />,
+    );
+  };
 
-      <div className="mt-2">
-        <SectionLabel label="Messaging" />
-      </div>
-
-      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
-        <Zap size={18} className="text-[var(--app-muted)] shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-            Stream Responses
-          </div>
-          <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-            Show replies as they arrive
-          </div>
-        </div>
-        <SwitchToggle
-          checked={prefs.streamResponses}
-          onCheckedChange={(v) => setPref("streamResponses", v)}
+  return (
+    <div className="grid grid-cols-2 gap-2.5">
+      {all.map((theme) => (
+        <ThemeCard
+          key={theme.id}
+          theme={theme}
+          selected={prefs.theme === theme.id}
+          onSelect={() => setPref("theme", theme.id)}
+          onEdit={theme.builtin ? undefined : () => openEditor(theme)}
+          onDuplicate={() => openEditor(theme, true)}
         />
-      </div>
+      ))}
 
-      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
-        <CornerDownLeft size={18} className="text-[var(--app-muted)] shrink-0" />
-        <div className="flex-1 min-w-0">
-          <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-            Send on Enter
-          </div>
-          <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-            Shift+Enter for new line
-          </div>
-        </div>
-        <SwitchToggle
-          checked={prefs.sendOnEnter}
-          onCheckedChange={(v) => setPref("sendOnEnter", v)}
-        />
-      </div>
-
-      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
-        <Clock size={18} className="text-[var(--app-muted)] shrink-0" />
-        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-          Show Timestamps
-        </span>
-        <SwitchToggle
-          checked={prefs.showTimestamps}
-          onCheckedChange={(v) => setPref("showTimestamps", v)}
-        />
-      </div>
-
-      <div className="mt-2">
-        <SectionLabel label="Notifications" />
-      </div>
-
-      <div className="flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-white/[0.04]">
-        <Bell size={18} className="text-[var(--app-muted)] shrink-0" />
-        <span className="flex-1 text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-          Push Notifications
-        </span>
-        <SwitchToggle
-          checked={prefs.notifications}
-          onCheckedChange={(v) => setPref("notifications", v)}
-        />
-      </div>
-
-      <div className="mt-2">
-        <SectionLabel label="Danger Zone" color="#EF4444" />
-      </div>
-
-      <button className="w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl hover:bg-red-500/10 transition-colors text-left">
-        <Trash2 size={18} className="text-[var(--app-danger)] shrink-0" />
-        <span className="text-[var(--app-danger)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-          Clear All Chat History
-        </span>
+      <button
+        onClick={() => openEditor(null)}
+        className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed text-[var(--app-muted)] hover:text-[var(--app-accent)] hover:border-[var(--app-accent)] transition-colors"
+        style={{ borderColor: "var(--app-border)", minHeight: 118 }}
+      >
+        <Palette size={20} />
+        <span style={{ fontSize: "12px", fontWeight: 600 }}>New theme</span>
       </button>
+    </div>
+  );
+}
+
+function ThemeCard({
+  theme,
+  selected,
+  onSelect,
+  onEdit,
+  onDuplicate,
+}: {
+  theme: Theme;
+  selected: boolean;
+  onSelect: () => void;
+  onEdit?: () => void;
+  onDuplicate: () => void;
+}) {
+  const SchemeIcon = theme.scheme === "light" ? Sun : Moon;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={onSelect}
+        className="w-full rounded-2xl overflow-hidden text-left transition-colors"
+        style={{
+          border: `2px solid ${selected ? "var(--app-accent)" : "var(--app-border)"}`,
+          background: selected ? "var(--app-accent-soft)" : "transparent",
+          padding: 4,
+        }}
+        title={theme.label}
+      >
+        <div className="rounded-xl overflow-hidden">
+          <ThemePreview tokens={theme.tokens} height={84} radiusScale={theme.radiusScale} />
+        </div>
+        <div className="flex items-center gap-1.5 px-1.5 pt-1.5">
+          <SchemeIcon size={12} className="text-[var(--app-muted)] shrink-0" />
+          <span
+            className="flex-1 truncate text-[var(--app-text)]"
+            style={{ fontSize: "12px", fontWeight: 600 }}
+          >
+            {theme.label}
+          </span>
+          {selected && <Check size={13} className="text-[var(--app-accent)] shrink-0" />}
+        </div>
+      </button>
+      <div className="absolute top-2 right-2 flex gap-1">
+        <button
+          onClick={onDuplicate}
+          className="p-1 rounded-md text-white/80 hover:text-white transition-colors"
+          style={{ background: "rgba(0,0,0,0.35)" }}
+          title="Duplicate as a new theme"
+        >
+          <Copy size={11} />
+        </button>
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            className="p-1 rounded-md text-white/80 hover:text-white transition-colors"
+            style={{ background: "rgba(0,0,0,0.35)" }}
+            title="Edit theme"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1059,6 +843,7 @@ function PreferencesSettings({
 /* -- LLM Provider ------------------------------------------------ */
 
 const PROVIDER_COLORS: Record<string, string> = {
+  "deepseek-local": "#4FA3E3",
   deepseek: "#4FA3E3",
   openai: "#10B981",
   claude: "#7C3AED",
@@ -1067,12 +852,14 @@ const PROVIDER_COLORS: Record<string, string> = {
 
 function ProviderSettings({
   providers,
+  providerTypes,
   onCreate,
   onUpdate,
   onDelete,
   showForm,
 }: {
   providers: LLMProvider[];
+  providerTypes: ProviderType[];
   onCreate: (data: LLMProviderCreate) => Promise<void>;
   onUpdate: (id: string, data: LLMProviderUpdate) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
@@ -1126,6 +913,7 @@ function ProviderSettings({
         <ProviderItem
           key={p.id}
           provider={p}
+          providerTypes={providerTypes}
           onEdit={() => showEditForm(p)}
           onDelete={() => onDelete(p.id)}
         />
@@ -1140,6 +928,7 @@ function ProviderSettings({
             <ProviderItem
               key={p.id}
               provider={p}
+              providerTypes={providerTypes}
               onEdit={() => showEditForm(p)}
               onDelete={() => onDelete(p.id)}
             />
@@ -1161,20 +950,70 @@ function ProviderSettings({
   );
 }
 
+function buildProviderSummary(
+  provider: LLMProvider,
+  providerType: ProviderType | null,
+  showKey: boolean
+): string {
+  const typeLabel = providerType?.label || provider.provider_type || provider.name;
+  const summaryParts = [`Type: ${typeLabel}`];
+
+  const customFields = providerType?.custom_provider_api?.fields || [];
+  const customConfig = provider.custom_config || {};
+  const summaryFields = customFields.filter((field) => field.summary);
+
+  summaryFields.forEach((field) => {
+    const rawValue = customConfig[field.key];
+    const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (value) {
+      summaryParts.push(`${field.label}: ${value}`);
+    }
+  });
+
+  if (customFields.length > 0) {
+    const keyField = customFields.find((field) => field.key === "api_key");
+    if (keyField) {
+      const customKey = typeof customConfig[keyField.key] === "string" ? customConfig[keyField.key].trim() : "";
+      const hasKey = customKey !== "" || provider.api_key.trim() !== "";
+      summaryParts.push(`${keyField.label}: ${showKey ? (customKey || provider.api_key || "Not set") : hasKey ? "hidden" : "Not set"}`);
+    }
+    return summaryParts.join(" · ");
+  }
+
+  summaryParts.push(`Endpoint: ${provider.base_url || "Not set"}`);
+  summaryParts.push(`Model: ${provider.default_model || "Not set"}`);
+  summaryParts.push(`Key: ${showKey ? (provider.api_key || "Not set") : provider.api_key ? "hidden" : "Not set"}`);
+
+  return summaryParts.join(" · ");
+}
+
 function ProviderItem({
   provider: p,
+  providerTypes,
   onEdit,
   onDelete,
 }: {
   provider: LLMProvider;
+  providerTypes: ProviderType[];
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const color = PROVIDER_COLORS[p.name] || "var(--app-accent)";
+  const providerIdentity = p.provider_type || p.name;
+  const color = PROVIDER_COLORS[providerIdentity] || "var(--app-accent)";
   const [showKey, setShowKey] = useState(false);
-  const apiKeyText = p.api_key || "Not set";
+  const providerType = useMemo(
+    () => providerTypes.find((item) => item.type === p.provider_type) || null,
+    [providerTypes, p.provider_type]
+  );
+  const summary = buildProviderSummary(p, providerType, showKey);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const pluginApi =
+    providerType?.plugin_api && providerType.plugin_api.endpoints.length > 0
+      ? providerType.plugin_api
+      : null;
 
   return (
+    <div>
     <div
       className="flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-white/5 transition-colors"
       style={{ opacity: p.enabled ? 1 : 0.5 }}
@@ -1211,12 +1050,20 @@ function ProviderItem({
           className="text-[var(--app-muted)] mt-0.5 break-all"
           style={{ fontSize: "12px", lineHeight: 1.45 }}
         >
-          Endpoint: {p.base_url || "Not set"} · Model: {p.default_model || "Not set"} · Key:{" "}
-          {showKey ? apiKeyText : "hidden"}
+          {summary}
         </div>
       </div>
 
       {/* Actions */}
+      {pluginApi && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setPanelOpen((value) => !value); }}
+          className="p-1.5 rounded-lg text-[var(--app-muted)] hover:text-[var(--app-accent)] transition-colors"
+          title={panelOpen ? "Hide plugin panel" : "Open plugin panel"}
+        >
+          <LayoutGrid size={14} />
+        </button>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -1239,6 +1086,13 @@ function ProviderItem({
       >
         <Trash2 size={14} />
       </button>
+    </div>
+
+    {panelOpen && pluginApi && (
+      <div style={{ marginLeft: 44, marginTop: 2 }}>
+        <PluginPanel pluginId={p.plugin_id || p.provider_type} api={pluginApi} />
+      </div>
+    )}
     </div>
   );
 }
@@ -1430,187 +1284,6 @@ function ModelItem({
         <Trash2 size={14} />
       </button>
       <SwitchToggle checked={model.enabled} onCheckedChange={onToggle} />
-    </div>
-  );
-}
-
-/* -- App Settings ------------------------------------------------ */
-
-function AppSettingsPanel({
-  settings,
-  saving,
-  onSave,
-}: {
-  settings: AppSettings | null;
-  saving: boolean;
-  onSave: (updates: Partial<AppSettings>) => Promise<void>;
-}) {
-  // Local form state so we can edit before saving
-  const [form, setForm] = useState<AppSettings>({
-    heartbeat_interval_minutes: 5,
-    emotion_decay_rate: 0.15,
-    loneliness_threshold: 0.6,
-  });
-  const [dirty, setDirty] = useState(false);
-
-  // Sync from props when settings load
-  useEffect(() => {
-    if (settings) {
-      setForm(settings);
-      setDirty(false);
-    }
-  }, [settings]);
-
-  const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
-    setDirty(true);
-  };
-
-  const handleSave = () => {
-    onSave(form).then(() => setDirty(false));
-  };
-
-  if (!settings) {
-    return (
-      <div className="py-8 text-center">
-        <div className="flex gap-1.5 justify-center">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="w-2 h-2 rounded-full bg-[var(--app-muted)] animate-bounce"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="py-2 px-2 space-y-1.5">
-      <SectionLabel label="Server Configuration" />
-
-      {/* Heartbeat interval */}
-      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
-        <div className="flex items-center gap-3">
-          <Activity size={18} className="text-[var(--app-muted)] shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-              Heartbeat Interval
-            </div>
-            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-              Minutes between background ticks
-            </div>
-          </div>
-        </div>
-        <input
-          type="number"
-          min={1}
-          max={1440}
-          value={form.heartbeat_interval_minutes}
-          onChange={(e) => update("heartbeat_interval_minutes", parseInt(e.target.value) || 5)}
-          className="w-full rounded-xl px-3 py-2 text-[var(--app-text)] text-sm"
-          style={{
-            background: "var(--app-elevated)",
-            border: "1px solid var(--app-border)",
-            outline: "none",
-          }}
-        />
-      </div>
-
-      {/* Emotion decay rate */}
-      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
-        <div className="flex items-center gap-3">
-          <Gauge size={18} className="text-[var(--app-muted)] shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-              Emotion Decay Rate
-            </div>
-            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-              How fast emotions drift toward neutral (0–1)
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <AppSlider
-            value={form.emotion_decay_rate}
-            min={0}
-            max={1}
-            step={0.01}
-            onValueChange={(v) => update("emotion_decay_rate", v)}
-          />
-          <span
-            className="w-12 text-right shrink-0 text-[var(--app-text)] rounded-lg px-1.5 py-1"
-            style={{
-              fontSize: "13px",
-              fontWeight: 600,
-              fontVariantNumeric: "tabular-nums",
-              background: "var(--app-elevated)",
-              color: "var(--app-accent)",
-            }}
-          >
-            {form.emotion_decay_rate.toFixed(2)}
-          </span>
-        </div>
-      </div>
-
-      {/* Loneliness threshold */}
-      <div className="rounded-2xl bg-white/[0.03] px-3.5 py-3.5 space-y-3">
-        <div className="flex items-center gap-3">
-          <Heart size={18} className="text-[var(--app-muted)] shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-[var(--app-text)]" style={{ fontSize: "14px", fontWeight: 500 }}>
-              Loneliness Threshold
-            </div>
-            <div className="text-[var(--app-muted)]" style={{ fontSize: "12px" }}>
-              Score that triggers proactive messaging (0–1)
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <AppSlider
-            value={form.loneliness_threshold}
-            min={0}
-            max={1}
-            step={0.01}
-            onValueChange={(v) => update("loneliness_threshold", v)}
-          />
-          <span
-            className="w-12 text-right shrink-0 text-[var(--app-text)] rounded-lg px-1.5 py-1"
-            style={{
-              fontSize: "13px",
-              fontWeight: 600,
-              fontVariantNumeric: "tabular-nums",
-              background: "var(--app-elevated)",
-              color: "var(--app-accent)",
-            }}
-          >
-            {form.loneliness_threshold.toFixed(2)}
-          </span>
-        </div>
-      </div>
-
-      {/* Save button */}
-      <div className="mt-3 px-1">
-        <button
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          className="w-full rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors"
-          style={{
-            background: dirty ? "var(--app-accent)" : "var(--app-elevated)",
-            color: dirty ? "#fff" : "var(--app-muted)",
-            opacity: dirty && !saving ? 1 : 0.7,
-            cursor: dirty && !saving ? "pointer" : "default",
-          }}
-        >
-          {saving ? "Saving…" : "Save Settings"}
-        </button>
-        {dirty && (
-          <p className="text-[var(--app-muted)] text-center mt-1.5" style={{ fontSize: "11px" }}>
-            Changes will take effect on the next heartbeat tick
-          </p>
-        )}
-      </div>
     </div>
   );
 }

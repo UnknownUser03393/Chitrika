@@ -53,6 +53,13 @@ class Memory(SQLModel, table=True):
         le=1.0,
         description="Emotional charge of the memory, -1.0 (negative) to 1.0 (positive)",
     )
+    embedding: Optional[bytes] = Field(
+        default=None,
+        description=(
+            "Local sentence-embedding of `content` (float32 bytes) for semantic "
+            "recall. None when no embedding model is configured or not yet computed."
+        ),
+    )
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow, index=True)
     last_accessed: datetime = Field(

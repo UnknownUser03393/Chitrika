@@ -1,0 +1,2 @@
+"""Persistence-only repositories."""
+

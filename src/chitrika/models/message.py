@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
+from sqlalchemy import CheckConstraint
 from sqlmodel import Field, Relationship
 
 from src.chitrika.models.base import MessageRole, UUIDPrimaryKeyMixin
@@ -17,6 +18,12 @@ class Message(UUIDPrimaryKeyMixin, table=True):
     """A single message within a conversation. Supports soft-delete and edit."""
 
     __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint(
+            "generation_status IN ('complete', 'interrupted', 'error')",
+            name="ck_messages_generation_status",
+        ),
+    )
 
     conversation_id: str = Field(
         foreign_key="conversations.id",
@@ -53,6 +60,17 @@ class Message(UUIDPrimaryKeyMixin, table=True):
         foreign_key="scheduled_messages.id",
         index=True,
         description="If this message was delivered from a scheduled proactive message",
+    )
+    generation_status: str = Field(
+        default="complete",
+        index=True,
+        max_length=16,
+        description="Assistant generation outcome: complete, interrupted, or error",
+    )
+    error_detail: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description="Sanitized technical detail for interrupted or failed generations",
     )
 
     conversation: "Conversation" = Relationship(back_populates="messages")

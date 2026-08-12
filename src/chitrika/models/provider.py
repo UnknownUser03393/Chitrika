@@ -1,8 +1,9 @@
 """LLM provider configuration and available model catalog."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import JSON, Column, Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 from src.chitrika.models.base import new_id
@@ -16,6 +17,14 @@ class LLMProvider(SQLModel, table=True):
     """A configured LLM provider with API key, base URL, and available models."""
 
     __tablename__ = "llm_providers"
+    __table_args__ = (
+        Index(
+            "uq_llm_providers_enabled_default",
+            "is_default",
+            unique=True,
+            sqlite_where=text("enabled = 1 AND is_default = 1"),
+        ),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     name: str = Field(
@@ -25,6 +34,16 @@ class LLMProvider(SQLModel, table=True):
     )
     display_name: str = Field(
         description="Human-readable name, e.g. 'DeepSeek V4'",
+    )
+    provider_type: str = Field(
+        default="openai",
+        index=True,
+        description="Runtime implementation type, e.g. 'openai' or plugin-defined types",
+    )
+    plugin_id: str | None = Field(
+        default=None,
+        index=True,
+        description="Owning plugin id for plugin-backed providers",
     )
     api_key: str = Field(
         default="",
@@ -37,6 +56,11 @@ class LLMProvider(SQLModel, table=True):
     default_model: str = Field(
         default="",
         description="Default model name (first in the list if not set)",
+    )
+    custom_config: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSON, nullable=False),
+        description="Plugin-defined provider configuration payload",
     )
     is_default: bool = Field(
         default=False,

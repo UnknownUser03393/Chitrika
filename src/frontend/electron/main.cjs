@@ -6,10 +6,14 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const { join } = require("path");
 const { spawn } = require("child_process");
-const { startBackend, stopBackend } = require("./backend.cjs");
+const { randomBytes } = require("crypto");
+const { startBackend, stopBackend, prepareDataDir } = require("./backend.cjs");
 
 const BACKEND_PORT = 8000;
 const isDev = !app.isPackaged;
+const apiToken = isDev
+  ? (process.env.CHITRIKA_API_TOKEN || "")
+  : randomBytes(32).toString("hex");
 
 let mainWindow = null;
 let toastWorker = null;
@@ -130,7 +134,9 @@ async function pollNotifications() {
 
   try {
     const url = `http://127.0.0.1:${BACKEND_PORT}/api/desktop/notifications/pending`;
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${apiToken}` },
+    });
     if (!res.ok) return;
 
     const pending = await res.json();
@@ -166,7 +172,10 @@ async function ackNotification(messageId) {
   try {
     await fetch(
       `http://127.0.0.1:${BACKEND_PORT}/api/desktop/notifications/${messageId}/ack`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiToken}` },
+      },
     );
   } catch { /* retry next poll */ }
 }
@@ -176,8 +185,11 @@ async function ackNotification(messageId) {
 // ---------------------------------------------------------------------------
 
 function setupIPC() {
-  ipcMain.on("get-api-base", (event) => {
-    event.returnValue = `http://127.0.0.1:${BACKEND_PORT}/api`;
+  ipcMain.on("get-api-config", (event) => {
+    event.returnValue = {
+      baseUrl: `http://127.0.0.1:${BACKEND_PORT}/api`,
+      token: apiToken,
+    };
   });
 
   ipcMain.on("show-window", () => {
@@ -202,7 +214,13 @@ app.whenReady().then(async () => {
   // Start backend (in dev, user starts it manually)
   if (!isDev) {
     try {
-      await startBackend(BACKEND_PORT);
+      const dataDir = await prepareDataDir();
+      await startBackend(BACKEND_PORT, {
+        packaged: true,
+        dataDir,
+        resourcesDir: process.resourcesPath,
+        apiToken,
+      });
       console.log("Backend started");
     } catch (err) {
       console.error("Backend start failed:", err);

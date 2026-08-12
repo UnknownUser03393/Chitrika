@@ -7,18 +7,20 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from src.chitrika.database import get_session
+from src.chitrika.database import get_session, get_transactional_session
 from src.chitrika.models.provider import LLMProvider
 from src.chitrika.schemas.provider_schemas import (
     LLMProviderCreate,
     LLMProviderResponse,
     LLMProviderUpdate,
+    ProviderTypeResponse,
 )
 from src.chitrika.services.provider_service import (
     provider_model_names,
     get_provider_by_id,
     replace_provider_models,
     create_llm_client,
+    list_provider_types,
 )
 from src.chitrika.utils.datetime_helpers import utcnow
 
@@ -42,9 +44,12 @@ def _model_to_response(p: LLMProvider) -> dict:
         "id": p.id,
         "name": p.name,
         "display_name": p.display_name,
+        "provider_type": p.provider_type,
+        "plugin_id": p.plugin_id,
         "api_key": p.api_key,
         "base_url": p.base_url,
         "default_model": p.default_model,
+        "custom_config": p.custom_config,
         "models": provider_model_names(p),
         "is_default": p.is_default,
         "enabled": p.enabled,
@@ -76,6 +81,14 @@ def list_providers(session: Session = Depends(get_session)) -> list[dict]:
     return [_model_to_response(p) for p in providers]
 
 
+@router.get("/provider-types", response_model=list[ProviderTypeResponse])
+def get_provider_types(
+    session: Session = Depends(get_transactional_session),
+) -> list[dict]:
+    """List built-in and plugin-backed provider implementation types."""
+    return list_provider_types(session)
+
+
 @router.get("/providers/{provider_id}", response_model=LLMProviderResponse)
 def get_provider(
     provider_id: str,
@@ -91,7 +104,7 @@ def get_provider(
 @router.post("/providers", response_model=LLMProviderResponse, status_code=201)
 def create_provider(
     body: LLMProviderCreate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Create a new LLM provider."""
     # Check for duplicate name
@@ -111,16 +124,18 @@ def create_provider(
     provider = LLMProvider(
         name=body.name,
         display_name=body.display_name,
+        provider_type=body.provider_type,
+        plugin_id=body.plugin_id,
         api_key=body.api_key,
         base_url=body.base_url,
         default_model=body.default_model,
+        custom_config=body.custom_config,
         is_default=body.is_default,
     )
     session.add(provider)
     session.flush()
     replace_provider_models(session, provider, body.models)
-    session.commit()
-    session.refresh(provider)
+    session.flush()
     logger.info("Created provider '%s' (id=%s)", provider.name, provider.id)
     return _model_to_response(provider)
 
@@ -129,7 +144,7 @@ def create_provider(
 def update_provider(
     provider_id: str,
     body: LLMProviderUpdate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Update an existing provider."""
     provider = session.exec(
@@ -153,17 +168,18 @@ def update_provider(
 
     for key, value in update_data.items():
         setattr(provider, key, value)
+    if not provider.enabled:
+        provider.is_default = False
     provider.updated_at = utcnow()
 
-    session.commit()
-    session.refresh(provider)
+    session.flush()
     return _model_to_response(provider)
 
 
 @router.delete("/providers/{provider_id}", status_code=204)
 def delete_provider(
     provider_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> None:
     """Soft-delete (disable) a provider."""
     provider = session.exec(
@@ -173,27 +189,23 @@ def delete_provider(
         raise HTTPException(status_code=404, detail="Provider not found")
 
     provider.enabled = False
+    provider.is_default = False
     provider.updated_at = utcnow()
-    session.commit()
+    session.flush()
     logger.info("Disabled provider '%s' (id=%s)", provider.name, provider.id)
 
 
 @router.get("/providers/{provider_id}/models")
 def fetch_provider_models(
     provider_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> list[dict]:
     """Fetch available models live from the provider's upstream API."""
     provider = get_provider_by_id(session, provider_id)
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found")
 
-    if not provider.api_key:
-        raise HTTPException(
-            status_code=400, detail="Provider has no API key configured"
-        )
-
-    client = create_llm_client(provider.api_key, provider.base_url)
+    client = create_llm_client(session, provider)
     if client is None:
         raise HTTPException(
             status_code=500, detail="Failed to create LLM client"

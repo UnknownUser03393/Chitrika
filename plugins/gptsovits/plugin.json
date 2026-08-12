@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "gptsovits",
+  "name": "GPT-SoVITS (Local Voice)",
+  "version": "0.1.0",
+  "description": "Manages a local GPT-SoVITS server (api_v2.py) and exposes cloned voice presets (0624xyt) for TTS synthesis.",
+  "author": "Chitrika",
+  "entrypoint": "plugin.py:plugin"
+}

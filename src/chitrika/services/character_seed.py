@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from sqlmodel import Session, select
@@ -13,8 +14,11 @@ from src.chitrika.services.provider_service import get_default_provider
 
 logger = logging.getLogger("chitrika.seed")
 
-# Path to the character definition file (relative to project root)
-_CHARACTER_FILE = Path(__file__).parent.parent.parent.parent / "skill_0624.txt"
+# Path to the character definition file (relative to project root).
+# Overridable via CHITRIKA_SKILL_FILE so the packaged desktop app can point at
+# its bundled resources dir instead of the repo root.
+_DEFAULT_CHARACTER_FILE = Path(__file__).parent.parent.parent.parent / "skill_0624.txt"
+_CHARACTER_FILE = Path(os.environ.get("CHITRIKA_SKILL_FILE", str(_DEFAULT_CHARACTER_FILE)))
 
 
 def _load_personality_prompt() -> str:
@@ -64,7 +68,6 @@ def seed_default_character(session: Session) -> Character | None:
     emotion = EmotionState(character_id=character.id)
     session.add(emotion)
 
-    session.commit()
-    session.refresh(character)
+    session.flush()
     logger.info("Seeded default character: %s (%s)", character.display_name, character.id)
     return character

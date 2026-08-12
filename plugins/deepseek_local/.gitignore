@@ -1,0 +1,4 @@
+data/auth_state.json
+data/session_store.json
+**/__pycache__/
+*.pyc

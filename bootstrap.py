@@ -3,8 +3,10 @@
 Press Ctrl+C to stop both servers.
 """
 
+import os
 import shutil
 import signal
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +30,10 @@ def _find_exe(name: str) -> str:
 
 
 def main() -> None:
+    api_token = os.environ.get("CHITRIKA_API_TOKEN") or secrets.token_hex(32)
+    child_env = os.environ.copy()
+    child_env["CHITRIKA_API_TOKEN"] = api_token
+    child_env["VITE_CHITRIKA_API_TOKEN"] = api_token
     print("============================================")
     print("  Chitrika — starting backend + frontend")
     print("============================================")
@@ -42,26 +48,52 @@ def main() -> None:
     print()
 
     backend = subprocess.Popen(
-        ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+        [
+            "uv", "run", "uvicorn", "src.main:app",
+            "--reload",
+            # Restrict the reload watcher to backend directories. Watching the
+            # whole repo (incl. src/frontend + node_modules) makes uvicorn
+            # reload on every frontend write — on Windows that spawns new
+            # worker processes and destabilises the vite dev server.
+            "--reload-dir", "src/chitrika",
+            "--reload-dir", "src/llmproviders",
+            "--reload-dir", "plugins",
+            "--host", "0.0.0.0",
+            "--port", "8000",
+        ],
         cwd=str(BACKEND_DIR),
+        env=child_env,
     )
     frontend = subprocess.Popen(
         [_find_exe("pnpm"), "dev"],
         cwd=str(FRONTEND_DIR),
+        env=child_env,
     )
 
     processes = [backend, frontend]
 
-    def shutdown(signum, frame):
-        print("\nShutting down...")
-        for p in processes:
+    def _terminate(p: subprocess.Popen) -> None:
+        if p.poll() is not None:
+            return
+        if os.name == "nt":
+            # Kill the whole tree — terminate() alone often leaves orphaned
+            # node / uvicorn children behind on Windows.
+            subprocess.run(
+                ["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                capture_output=True,
+            )
+        else:
             p.terminate()
-        for p in processes:
             try:
                 p.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait()
+
+    def shutdown(signum, frame):
+        print("\nShutting down...")
+        for p in processes:
+            _terminate(p)
         print("Servers stopped.")
         sys.exit(0)
 

@@ -2,23 +2,31 @@
 
 :root {
   --font-size: 16px;
-  --app-bg: #f7f3ee;
-  --app-panel: #fffaf4;
-  --app-panel-strong: #f1e8dc;
-  --app-elevated: #eee3d5;
-  --app-border: #ded0c1;
-  --app-text: #2a221e;
-  --app-muted: #756a61;
-  --app-subtle: #9a8e82;
-  --app-accent: #c56b58;
-  --app-accent-strong: #9e4f40;
-  --app-accent-soft: rgba(197, 107, 88, 0.16);
-  --app-user-bubble: #c56b58;
-  --app-assistant-bubble: #fffdf9;
-  --app-danger: #c84f5f;
+  /* Per-theme corner-radius multiplier (applyTheme overrides this inline). */
+  --app-radius-scale: 1;
+  /*
+   * Pre-paint fallback = Midnight (the default theme). At runtime applyTheme()
+   * in themes.ts injects the active theme's --app-* values as inline styles on
+   * <html>, which override these. Keeping the default here avoids a flash
+   * before the JS runs.
+   */
+  --app-bg: #14151d;
+  --app-panel: #1c1e29;
+  --app-panel-strong: #232634;
+  --app-elevated: #2b2f40;
+  --app-border: #383d51;
+  --app-text: #eef0f8;
+  --app-muted: #9aa2ba;
+  --app-subtle: #6a7186;
+  --app-accent: #ec8468;
+  --app-accent-strong: #ffa384;
+  --app-accent-soft: rgba(236, 132, 104, 0.15);
+  --app-user-bubble: #c96a52;
+  --app-assistant-bubble: #232634;
+  --app-danger: #f0697a;
   --success: #4ade80;
-  --app-shadow: 0 18px 46px rgba(84, 62, 44, 0.14);
-  --app-hover: rgba(42, 34, 30, 0.07);
+  --app-shadow: 0 22px 54px rgba(6, 8, 18, 0.5);
+  --app-hover: rgba(255, 255, 255, 0.06);
 
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);
@@ -48,7 +56,7 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.625rem;
+  --radius: calc(0.625rem * var(--app-radius-scale));
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: #030213;
@@ -59,70 +67,12 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark,
-[data-theme="midnight"] {
-  color-scheme: dark;
-  --app-bg: #121417;
-  --app-panel: #1a1d21;
-  --app-panel-strong: #20252a;
-  --app-elevated: #252a30;
-  --app-border: #30363d;
-  --app-text: #f2eee8;
-  --app-muted: #a99f94;
-  --app-subtle: #776f68;
-  --app-accent: #d38367;
-  --app-accent-strong: #f0a684;
-  --app-accent-soft: rgba(211, 131, 103, 0.16);
-  --app-user-bubble: #9d5f52;
-  --app-assistant-bubble: #20252a;
-  --app-danger: #ef6a78;
-  --success: #4ade80;
-  --app-shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
-  --app-hover: rgba(255, 255, 255, 0.07);
-}
-
-[data-theme="graphite"] {
-  color-scheme: dark;
-  --app-bg: #151617;
-  --app-panel: #202224;
-  --app-panel-strong: #26292b;
-  --app-elevated: #2b2f31;
-  --app-border: #373d40;
-  --app-text: #f0f1ee;
-  --app-muted: #a4aaa7;
-  --app-subtle: #777f7b;
-  --app-accent: #7fbea5;
-  --app-accent-strong: #a4d8bf;
-  --app-accent-soft: rgba(127, 190, 165, 0.16);
-  --app-user-bubble: #477967;
-  --app-assistant-bubble: #252a2b;
-  --app-danger: #ef7272;
-  --success: #4ade80;
-  --app-shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
-  --app-hover: rgba(255, 255, 255, 0.07);
-}
-
-[data-theme="dawn"] {
-  color-scheme: light;
-  --app-bg: #f6f2ec;
-  --app-panel: #fffaf3;
-  --app-panel-strong: #f1e7dc;
-  --app-elevated: #eee3d6;
-  --app-border: #ddd0c0;
-  --app-text: #2d241e;
-  --app-muted: #75695e;
-  --app-subtle: #9a8d80;
-  --app-accent: #c86f4a;
-  --app-accent-strong: #a95434;
-  --app-accent-soft: rgba(200, 111, 74, 0.15);
-  --app-user-bubble: #c86f4a;
-  --app-assistant-bubble: #fffaf3;
-  --app-danger: #c84f5f;
-  --success: #4ade80;
-  --app-shadow: 0 16px 42px rgba(84, 62, 44, 0.16);
-  --app-hover: rgba(45, 36, 30, 0.07);
-}
-
+/*
+ * Per-theme --app-* palettes live in themes.ts and are injected at runtime by
+ * applyTheme() as inline styles on <html>. The block below only carries the
+ * shadcn/ui dark tokens, keyed on the `.dark` class that applyTheme() toggles
+ * for dark schemes.
+ */
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -187,10 +137,18 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /*
+   * The whole corner-radius ladder is multiplied by --app-radius-scale, which
+   * applyTheme() sets per theme. At scale 1 these resolve to Tailwind's default
+   * pixels (6/8/10/14/16/24) so existing themes are unchanged; an "expressive"
+   * theme raises the scale and every rounded-* class across the app follows.
+   */
+  --radius-sm: calc(0.375rem * var(--app-radius-scale));
+  --radius-md: calc(0.5rem * var(--app-radius-scale));
+  --radius-lg: calc(0.625rem * var(--app-radius-scale));
+  --radius-xl: calc(0.875rem * var(--app-radius-scale));
+  --radius-2xl: calc(1rem * var(--app-radius-scale));
+  --radius-3xl: calc(1.5rem * var(--app-radius-scale));
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

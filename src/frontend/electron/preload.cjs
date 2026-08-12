@@ -6,8 +6,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("desktopAPI", {
-  /** Backend base URL for API calls (e.g. "http://127.0.0.1:8000/api"). */
-  getApiBase: () => ipcRenderer.sendSync("get-api-base"),
+  /** In-memory backend connection details for authenticated API calls. */
+  getApiConfig: () => ipcRenderer.sendSync("get-api-config"),
 
   /** Listen for toast-click → switch-conversation events from main. */
   onNotificationClick: (callback) => {

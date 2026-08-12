@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from src.chitrika.database import get_session
+from src.chitrika.database import get_session, get_transactional_session
 from src.chitrika.models.character import Character
 from src.chitrika.models.emotion import EmotionState
 from src.chitrika.services.provider_service import get_provider_by_name
@@ -76,7 +76,7 @@ def get_character(
 @router.post("/characters", response_model=CharacterResponse, status_code=201)
 def create_character(
     body: CharacterCreate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Create a new character with a neutral emotion state."""
     # Check for duplicate name
@@ -103,8 +103,7 @@ def create_character(
     # Create neutral emotion state
     emotion = EmotionState(character_id=character.id)
     session.add(emotion)
-    session.commit()
-    session.refresh(character)
+    session.flush()
     return _character_to_response(character)
 
 
@@ -116,7 +115,7 @@ def create_character(
 def update_character(
     character_id: str,
     body: CharacterUpdate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Update an existing character."""
     character = session.exec(
@@ -135,8 +134,7 @@ def update_character(
         setattr(character, key, value)
     character.updated_at = utcnow()
 
-    session.commit()
-    session.refresh(character)
+    session.flush()
     return _character_to_response(character)
 
 
@@ -147,7 +145,7 @@ def update_character(
 @router.delete("/characters/{character_id}", status_code=204)
 def delete_character(
     character_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> None:
     """Disable (soft-delete) a character."""
     character = session.exec(
@@ -158,4 +156,4 @@ def delete_character(
 
     character.enabled = False
     character.updated_at = utcnow()
-    session.commit()
+    session.flush()

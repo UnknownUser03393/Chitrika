@@ -1,0 +1,9 @@
+{
+  "manifest_version": 1,
+  "id": "deepseek_local",
+  "name": "DeepSeek Web (Local)",
+  "version": "0.3.0",
+  "description": "Bundled reverse-engineered chat.deepseek.com provider (browser auth_state + PoW). No official API key.",
+  "author": "Chitrika",
+  "entrypoint": "plugin.py:plugin"
+}

@@ -39,6 +39,19 @@ def sse_done(message_id: str, usage: dict | None = None) -> str:
     return sse_event("message", payload)
 
 
-def sse_error(message: str) -> str:
-    """Emit an error event."""
-    return sse_event("error", {"type": "error", "message": message})
+def sse_error(
+    message: str,
+    *,
+    code: str = "generation_error",
+    details: str = "",
+    message_id: str | None = None,
+) -> str:
+    """Emit a structured, user-safe error event."""
+    payload: dict[str, object] = {
+        "type": "error",
+        "code": code,
+        "message": message,
+        "details": details,
+        "message_id": message_id,
+    }
+    return sse_event("error", payload)

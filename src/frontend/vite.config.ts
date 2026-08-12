@@ -85,6 +85,7 @@ export default defineConfig(({ command }) => ({
     // IPv4 + 8080 avoids WinNAT/Hyper-V port reservation on Windows
     host: '127.0.0.1',
     port: 8080,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, Depends
 from sqlmodel import Session
 
-from src.chitrika.database import get_session
+from src.chitrika.database import get_session, get_transactional_session
 from src.chitrika.engines.settings_engine import SettingsEngine
 from src.chitrika.schemas.settings_schemas import AppSettings, AppSettingsUpdate
 
@@ -36,7 +36,7 @@ def get_settings(session: Session = Depends(get_session)) -> AppSettings:
 @router.put("/settings", response_model=AppSettings)
 def update_settings(
     body: AppSettingsUpdate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> AppSettings:
     """Update application settings.  Only sent fields are changed."""
     engine = SettingsEngine(session)

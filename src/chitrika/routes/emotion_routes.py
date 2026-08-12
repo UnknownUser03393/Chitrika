@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
-from src.chitrika.database import get_session
+from src.chitrika.database import get_session, get_transactional_session
 from src.chitrika.engines.emotion_engine import EmotionEngine
 from src.chitrika.schemas.emotion_schemas import (
     EmotionDelta,
@@ -26,7 +26,7 @@ router = APIRouter(tags=["emotion"])
 )
 def get_emotion(
     character_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Get the current emotional state, mood, and loneliness for a character."""
     engine = EmotionEngine(session)
@@ -48,7 +48,7 @@ def get_emotion(
 def apply_emotion_delta(
     character_id: str,
     delta: EmotionDelta,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Apply an emotion delta and return the updated state.
 

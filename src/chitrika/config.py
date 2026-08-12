@@ -21,6 +21,7 @@ logger = logging.getLogger("chitrika.config")
 
 DEFAULT_DATABASE_URL = "sqlite:///./chitrika.db"
 DEFAULT_CORS_ORIGINS: list[str] = [
+    "null",  # Electron file:// renderer sends Origin: null
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
@@ -104,6 +105,8 @@ class ChitrikaConfig:
         else:
             self.cors_origins = ",".join(DEFAULT_CORS_ORIGINS)
 
+        self.api_token = os.environ.get("CHITRIKA_API_TOKEN", "").strip()
+
         env_plugins = os.environ.get("PLUGINS_DIR", "").strip()
         file_plugins = file_data.get("plugins_dir")
         if env_plugins:
@@ -122,6 +125,15 @@ class ChitrikaConfig:
         else:
             self.emotion_classifier_model_dir = str((_project_root() / "models" / "emotion").resolve())
 
+        env_embedding_model = os.environ.get("EMBEDDING_MODEL_DIR", "").strip()
+        file_embedding_model = file_data.get("embedding_model_dir")
+        if env_embedding_model:
+            self.embedding_model_dir = str(Path(env_embedding_model).expanduser().resolve())
+        elif isinstance(file_embedding_model, str) and file_embedding_model.strip():
+            self.embedding_model_dir = str(Path(file_embedding_model).expanduser().resolve())
+        else:
+            self.embedding_model_dir = str((_project_root() / "models" / "embedding").resolve())
+
         env_debug_panel = os.environ.get("EMOTION_DEBUG_PANEL", "").strip()
         if env_debug_panel:
             self.emotion_debug_panel = _as_bool(env_debug_panel)
@@ -131,7 +143,11 @@ class ChitrikaConfig:
     @property
     def cors_origin_list(self) -> list[str]:
         """Parse comma-separated CORS origins into a list."""
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        if "*" in origins:
+            logger.error("CORS_ORIGINS='*' is not allowed; using local defaults")
+            return list(DEFAULT_CORS_ORIGINS)
+        return origins
 
 
 # Singleton — imported by database.py / main.py at startup

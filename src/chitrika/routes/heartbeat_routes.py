@@ -4,25 +4,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session
 
 from src.chitrika.database import get_session
-from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
 from src.chitrika.engines.settings_engine import SettingsEngine
+from src.chitrika.runtime import ApplicationContainer
 
 logger = logging.getLogger("chitrika.routes.heartbeat")
 
 router = APIRouter(tags=["heartbeat"])
 
-# Reference to the running engine (set by main.py lifespan)
-_engine: HeartbeatEngine | None = None
-
-
-def set_heartbeat_engine(engine: HeartbeatEngine) -> None:
-    """Register the running heartbeat engine so routes can query it."""
-    global _engine
-    _engine = engine
+def _container(request: Request) -> ApplicationContainer:
+    return request.app.state.container
 
 
 # ---------------------------------------------------------------------------
@@ -31,13 +25,14 @@ def set_heartbeat_engine(engine: HeartbeatEngine) -> None:
 
 
 @router.get("/heartbeat/status")
-def get_heartbeat_status(session: Session = Depends(get_session)) -> dict:
+def get_heartbeat_status(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> dict:
     """Return the current heartbeat engine status."""
-    if _engine is None:
-        # Read defaults from DB settings
-        settings = SettingsEngine(session)
-        settings.apply_defaults()
-        data = settings.get_typed()
+    scheduler = _container(request).heartbeat_scheduler
+    if scheduler is None:
+        data = SettingsEngine(session).get_typed()
         return {
             "running": False,
             "tick_interval_minutes": data.get("heartbeat_interval_minutes", 5),
@@ -45,7 +40,7 @@ def get_heartbeat_status(session: Session = Depends(get_session)) -> dict:
             "tick_count": 0,
             "last_tick": None,
         }
-    return _engine.status
+    return scheduler.status.as_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -54,9 +49,10 @@ def get_heartbeat_status(session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("/heartbeat/tick")
-def trigger_tick() -> dict:
+def trigger_tick(request: Request) -> dict:
     """Manually trigger a heartbeat tick (for testing/demo)."""
-    if _engine is None:
+    scheduler = _container(request).heartbeat_scheduler
+    if scheduler is None:
         return {"error": "Heartbeat engine is not running"}
-    _engine.tick()
-    return {"status": "ok", "tick_count": _engine._tick_count}
+    scheduler.tick()
+    return {"status": "ok", "tick_count": scheduler.status.tick_count}

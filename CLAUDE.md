@@ -71,9 +71,19 @@ Each character has an `EmotionState` row with eight float dimensions (`joy`, `sa
 ### Heartbeat engine
 
 `HeartbeatEngine` runs on a background APScheduler thread (default: every 5 minutes). Each tick processes all enabled characters:
-1. Emotion decay → 2. Memory importance decay → 3. Loneliness check → 4. Proactive message scheduling (when loneliness >= threshold, default 0.6).
+1. Emotion decay → 2. Memory importance decay → 3. Embedding backfill + optional episodic summarization → 4. Loneliness check → 5. Proactive message scheduling (when loneliness >= threshold, default 0.6).
 
 The engine is started in `main.py`'s lifespan and stopped on shutdown. Tests monkeypatch `HeartbeatEngine.start` to a no-op.
+
+### Memory system
+
+Three types of memory per character (`Memory.memory_type`): `short_term` (raw recent messages, capped at 50), `long_term` (durable user facts), `episodic` (narrative summaries of past chats).
+
+- **Semantic recall.** `MemoryEngine.retrieve_relevant(character_id, query)` embeds `query` with a local ONNX sentence model and re-ranks a candidate pool by `0.7 × cosine + 0.3 × importance`. Without a model it falls back to `get_relevant` (importance-only). `ChatEngine` passes the current user message as `query`.
+- **Embedding storage.** Each memory carries a `BLOB` `embedding` column (float32 bytes; migration in `database._migrate_columns`). Computed on `store()`, backfilled by the heartbeat via `backfill_embeddings`. Wrapper: `src/chitrika/utils/memory_embedding.py` (mirrors the ONNX emotion adapter — lazy singleton, graceful `None`).
+- **Fact extraction.** Regex extractor always runs (free). `memory_llm_extraction` setting (default off, costs tokens) additionally invokes the LLM in `ChatEngine._post_process_memories_llm`.
+- **Episodic summaries.** `memory_episodic_summary` setting (default off, costs tokens). The heartbeat compresses every batch of 30 `short_term` into one `episodic` memory (`HeartbeatEngine._summarize_recent_memories`), then archives the batch via `MemoryEngine.archive_memories`.
+- **Trim guard.** `_trim_short_term` must only forget when over `SHORT_TERM_LIMIT` — a negative slice used to wipe memories before the cap (regression-tested).
 
 ### LLM provider abstraction
 

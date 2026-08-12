@@ -45,8 +45,7 @@ class EmotionEngine:
 
             state = EmotionState(character_id=character_id)
             self._session.add(state)
-            self._session.commit()
-            self._session.refresh(state)
+            self._session.flush()
             logger.info("Created neutral emotion state for character %s", character_id)
         return state
 
@@ -73,8 +72,7 @@ class EmotionEngine:
             setattr(state, dim, decayed[dim])
         state.updated_at = utcnow()
 
-        self._session.commit()
-        self._session.refresh(state)
+        self._session.flush()
         return state
 
     # ------------------------------------------------------------------
@@ -99,8 +97,7 @@ class EmotionEngine:
             setattr(state, dim, updated[dim])
         state.updated_at = utcnow()
 
-        self._session.commit()
-        self._session.refresh(state)
+        self._session.flush()
         return state
 
     # ------------------------------------------------------------------

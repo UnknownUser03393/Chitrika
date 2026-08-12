@@ -2,7 +2,9 @@
  * Chitrika API client — thin wrapper around fetch with SSE support.
  */
 
-const BASE: string = window.desktopAPI?.getApiBase?.() || "/api";
+import { API_BASE as BASE, apiFetch } from "./api-client";
+
+export { streamMessage } from "./chat-stream";
 
 // ---------------------------------------------------------------------------
 // Types (mirroring mockData.ts + backend DTOs)
@@ -28,6 +30,15 @@ export interface Message {
   created_at?: string;
   edited_at?: string | null;
   is_deleted?: boolean;
+  generation_status?: "complete" | "interrupted" | "error";
+  error_detail?: string | null;
+}
+
+export interface StreamErrorInfo {
+  code: string;
+  message: string;
+  details: string;
+  message_id?: string;
 }
 
 export interface AIModel {
@@ -102,6 +113,24 @@ export interface PendingNotification {
   created_at: string | null;
 }
 
+export type TTSProvider = "openai" | "gptsovits";
+
+export interface TTSRequest {
+  provider?: TTSProvider;
+  text: string;
+  api_key: string;
+  base_url: string;
+  model: string;
+  voice: string;
+  speed: number;
+  response_format?: string;
+  /** GPT-SoVITS native fields (used when provider === "gptsovits"). */
+  ref_audio_path?: string;
+  prompt_text?: string;
+  text_lang?: string;
+  prompt_lang?: string;
+}
+
 export interface BatchConversationResult {
   requested: number;
   affected: number;
@@ -113,13 +142,13 @@ export interface BatchConversationResult {
 // ---------------------------------------------------------------------------
 
 export async function fetchConversations(): Promise<Chat[]> {
-  const res = await fetch(`${BASE}/conversations`);
+  const res = await apiFetch(`${BASE}/conversations`);
   if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
   return res.json();
 }
 
 export async function createConversation(characterId: string): Promise<Chat> {
-  const res = await fetch(`${BASE}/conversations`, {
+  const res = await apiFetch(`${BASE}/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ character_id: characterId }),
@@ -129,12 +158,12 @@ export async function createConversation(characterId: string): Promise<Chat> {
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/conversations/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/conversations/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete conversation: ${res.status}`);
 }
 
 export async function batchDeleteConversations(ids: string[]): Promise<BatchConversationResult> {
-  const res = await fetch(`${BASE}/conversations/batch/delete`, {
+  const res = await apiFetch(`${BASE}/conversations/batch/delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),
@@ -147,12 +176,12 @@ export async function batchDeleteConversations(ids: string[]): Promise<BatchConv
 }
 
 export async function clearConversationMessages(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/conversations/${id}/messages`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/conversations/${id}/messages`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to clear messages: ${res.status}`);
 }
 
 export async function batchClearConversationMessages(ids: string[]): Promise<BatchConversationResult> {
-  const res = await fetch(`${BASE}/conversations/batch/clear-messages`, {
+  const res = await apiFetch(`${BASE}/conversations/batch/clear-messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),
@@ -165,7 +194,7 @@ export async function batchClearConversationMessages(ids: string[]): Promise<Bat
 }
 
 export async function markConversationRead(id: string): Promise<number> {
-  const res = await fetch(`${BASE}/conversations/${id}/read`, { method: "POST" });
+  const res = await apiFetch(`${BASE}/conversations/${id}/read`, { method: "POST" });
   if (!res.ok) return 0;
   const data = await res.json();
   return data.marked_read || 0;
@@ -176,7 +205,7 @@ export async function markConversationRead(id: string): Promise<number> {
 // ---------------------------------------------------------------------------
 
 export async function fetchMessages(conversationId: string): Promise<Message[]> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/conversations/${conversationId}/messages?limit=100`
   );
   if (!res.ok) throw new Error(`Failed to fetch messages: ${res.status}`);
@@ -201,101 +230,11 @@ export async function fetchMessages(conversationId: string): Promise<Message[]> 
  *
  * Returns an AbortController so the caller can cancel mid-stream.
  */
-export function streamMessage(
-  conversationId: string,
-  content: string,
-  onChunk: (text: string) => void,
-  onMessageDone: (messageText: string, messageId: string) => void,
-  onStreamEnd: () => void,
-  onError: (error: string) => void,
-  onUserMessageSaved?: (messageId: string) => void
-): AbortController {
-  const controller = new AbortController();
-
-  fetch(`${BASE}/conversations/${conversationId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-    signal: controller.signal,
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        onError(`Server error: ${res.status}`);
-        return;
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) {
-        onError("No response stream");
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-      /** Accumulated text for the *current* message (reset on "start"). */
-      let currentMessageText = "";
-      let currentMessageId = "";
-      let streamHadError = false;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            switch (event.type) {
-              case "start":
-                currentMessageId = event.message_id;
-                currentMessageText = "";
-                if (event.user_message_id) {
-                  onUserMessageSaved?.(event.user_message_id);
-                }
-                break;
-              case "content":
-                currentMessageText += event.content;
-                onChunk(event.content);
-                break;
-              case "done":
-                if (currentMessageText) {
-                  onMessageDone(currentMessageText, currentMessageId);
-                }
-                break;
-              case "error":
-                streamHadError = true;
-                onError(event.message);
-                break;
-            }
-          } catch {
-            // Skip malformed SSE lines
-          }
-        }
-      }
-
-      // Stream ended naturally — notify the caller.
-      if (!streamHadError) {
-        onStreamEnd();
-      }
-    })
-    .catch((err) => {
-      if (err.name !== "AbortError") {
-        onError(err.message);
-      }
-    });
-
-  return controller;
-}
-
 export async function editMessage(
   messageId: string,
   content: string
 ): Promise<Message> {
-  const res = await fetch(`${BASE}/messages/${messageId}`, {
+  const res = await apiFetch(`${BASE}/messages/${messageId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
@@ -305,7 +244,7 @@ export async function editMessage(
 }
 
 export async function recallMessage(messageId: string): Promise<Message> {
-  const res = await fetch(`${BASE}/messages/${messageId}/recall`, {
+  const res = await apiFetch(`${BASE}/messages/${messageId}/recall`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(`Failed to recall message: ${res.status}`);
@@ -313,7 +252,7 @@ export async function recallMessage(messageId: string): Promise<Message> {
 }
 
 export async function deleteMessage(messageId: string): Promise<void> {
-  const res = await fetch(`${BASE}/messages/${messageId}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/messages/${messageId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete message: ${res.status}`);
 }
 
@@ -322,7 +261,7 @@ export async function deleteMessage(messageId: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function fetchCharacters(): Promise<Character[]> {
-  const res = await fetch(`${BASE}/characters`);
+  const res = await apiFetch(`${BASE}/characters`);
   if (!res.ok) throw new Error(`Failed to fetch characters: ${res.status}`);
   const data = await res.json();
   return data.characters || [];
@@ -338,7 +277,7 @@ export async function createCharacter(data: {
   color?: string;
   avatar_url?: string;
 }): Promise<Character> {
-  const res = await fetch(`${BASE}/characters`, {
+  const res = await apiFetch(`${BASE}/characters`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -354,7 +293,7 @@ export async function updateCharacter(
   id: string,
   updates: Partial<Character>
 ): Promise<Character> {
-  const res = await fetch(`${BASE}/characters/${id}`, {
+  const res = await apiFetch(`${BASE}/characters/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -364,7 +303,7 @@ export async function updateCharacter(
 }
 
 export async function deleteCharacter(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/characters/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/characters/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete character: ${res.status}`);
 }
 
@@ -373,13 +312,13 @@ export async function deleteCharacter(id: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function fetchEmotion(characterId: string): Promise<EmotionState> {
-  const res = await fetch(`${BASE}/characters/${characterId}/emotion`);
+  const res = await apiFetch(`${BASE}/characters/${characterId}/emotion`);
   if (!res.ok) throw new Error(`Failed to fetch emotion: ${res.status}`);
   return res.json();
 }
 
 export async function fetchPendingNotifications(): Promise<PendingNotification[]> {
-  const res = await fetch(`${BASE}/desktop/notifications/pending`);
+  const res = await apiFetch(`${BASE}/desktop/notifications/pending`);
   if (!res.ok) return [];
   return res.json();
 }
@@ -388,7 +327,7 @@ export async function fetchMemories(
   characterId: string,
   includeForgotten = false
 ): Promise<Memory[]> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${BASE}/characters/${characterId}/memories?limit=200&include_forgotten=${includeForgotten}`
   );
   if (!res.ok) throw new Error(`Failed to fetch memories: ${res.status}`);
@@ -397,16 +336,55 @@ export async function fetchMemories(
 }
 
 export async function fetchRelationship(characterId: string): Promise<RelationshipState> {
-  const res = await fetch(`${BASE}/characters/${characterId}/relationship`);
+  const res = await apiFetch(`${BASE}/characters/${characterId}/relationship`);
   if (!res.ok) throw new Error(`Failed to fetch relationship: ${res.status}`);
   return res.json();
+}
+
+export interface GPTSoVITSVoice {
+  value: string;
+  label: string;
+  ref_audio_path: string;
+  prompt_text: string;
+  prompt_lang: string;
+}
+
+export async function fetchGPTSoVITSVoices(): Promise<GPTSoVITSVoice[]> {
+  try {
+    const data = await callPluginApi<{ voices?: GPTSoVITSVoice[] }>(
+      "gptsovits",
+      "GET",
+      "/voices"
+    );
+    return data.voices || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function synthesizeTTS(data: TTSRequest): Promise<Blob> {
+  const isGPT = data.provider === "gptsovits";
+  const res = await apiFetch(`${BASE}/tts/synthesize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      provider: data.provider || "openai",
+      response_format: isGPT ? undefined : "mp3",
+      ...data,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to synthesize speech: ${res.status}`);
+  }
+  return res.blob();
 }
 
 export async function createMemory(
   characterId: string,
   data: Pick<Memory, "memory_type" | "content"> & Partial<Pick<Memory, "importance" | "is_pinned">>
 ): Promise<Memory> {
-  const res = await fetch(`${BASE}/characters/${characterId}/memories`, {
+  const res = await apiFetch(`${BASE}/characters/${characterId}/memories`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -419,7 +397,7 @@ export async function updateMemory(
   memoryId: string,
   updates: Partial<Pick<Memory, "content" | "importance" | "is_pinned" | "is_forgotten">>
 ): Promise<Memory> {
-  const res = await fetch(`${BASE}/memories/${memoryId}`, {
+  const res = await apiFetch(`${BASE}/memories/${memoryId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -429,7 +407,7 @@ export async function updateMemory(
 }
 
 export async function deleteMemory(memoryId: string): Promise<void> {
-  const res = await fetch(`${BASE}/memories/${memoryId}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/memories/${memoryId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete memory: ${res.status}`);
 }
 
@@ -437,13 +415,40 @@ export async function deleteMemory(memoryId: string): Promise<void> {
 // LLM Providers
 // ---------------------------------------------------------------------------
 
+export interface CustomProviderOption {
+  value: string;
+  label: string;
+}
+
+export interface CustomProviderField {
+  key: string;
+  label: string;
+  input_type: "text" | "password" | "select";
+  required: boolean;
+  secret: boolean;
+  default: string;
+  placeholder: string;
+  help_text: string;
+  options: CustomProviderOption[];
+  summary: boolean;
+}
+
+export interface CustomProviderAPI {
+  fields: CustomProviderField[];
+  supports_model_fetch: boolean;
+  model_field_key: string | null;
+}
+
 export interface LLMProvider {
   id: string;
   name: string;
   display_name: string;
+  provider_type: string;
+  plugin_id: string | null;
   api_key: string;
   base_url: string;
   default_model: string;
+  custom_config: Record<string, string>;
   models: string[];
   is_default: boolean;
   enabled: boolean;
@@ -454,31 +459,37 @@ export interface LLMProvider {
 export interface LLMProviderCreate {
   name: string;
   display_name: string;
+  provider_type: string;
+  plugin_id?: string | null;
   api_key: string;
   base_url: string;
   default_model?: string;
+  custom_config?: Record<string, string>;
   models?: string[];
   is_default?: boolean;
 }
 
 export interface LLMProviderUpdate {
   display_name?: string;
+  provider_type?: string;
+  plugin_id?: string | null;
   api_key?: string;
   base_url?: string;
   default_model?: string;
+  custom_config?: Record<string, string>;
   models?: string[];
   is_default?: boolean;
   enabled?: boolean;
 }
 
 export async function fetchProviders(): Promise<LLMProvider[]> {
-  const res = await fetch(`${BASE}/providers`);
+  const res = await apiFetch(`${BASE}/providers`);
   if (!res.ok) throw new Error(`Failed to fetch providers: ${res.status}`);
   return res.json();
 }
 
 export async function fetchProvider(id: string): Promise<LLMProvider> {
-  const res = await fetch(`${BASE}/providers/${id}`);
+  const res = await apiFetch(`${BASE}/providers/${id}`);
   if (!res.ok) throw new Error(`Failed to fetch provider: ${res.status}`);
   return res.json();
 }
@@ -486,7 +497,7 @@ export async function fetchProvider(id: string): Promise<LLMProvider> {
 export async function createProvider(
   data: LLMProviderCreate
 ): Promise<LLMProvider> {
-  const res = await fetch(`${BASE}/providers`, {
+  const res = await apiFetch(`${BASE}/providers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -502,7 +513,7 @@ export async function updateProvider(
   id: string,
   updates: LLMProviderUpdate
 ): Promise<LLMProvider> {
-  const res = await fetch(`${BASE}/providers/${id}`, {
+  const res = await apiFetch(`${BASE}/providers/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -515,8 +526,56 @@ export async function updateProvider(
 }
 
 export async function deleteProvider(id: string): Promise<void> {
-  const res = await fetch(`${BASE}/providers/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${BASE}/providers/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete provider: ${res.status}`);
+}
+
+export interface PluginEndpoint {
+  method: "GET" | "POST" | "PATCH" | "DELETE";
+  path: string;
+  summary: string;
+  description: string;
+}
+
+export interface PluginAPI {
+  endpoints: PluginEndpoint[];
+}
+
+export interface ProviderType {
+  type: string;
+  label: string;
+  plugin_id: string | null;
+  needs_api_key: boolean;
+  needs_base_url: boolean;
+  default_base_url: string;
+  default_model: string;
+  supports_model_fetch: boolean;
+  custom_provider_api: CustomProviderAPI | null;
+  plugin_api: PluginAPI | null;
+}
+
+/**
+ * Call a plugin-declared endpoint (Plugin OpenAPI).
+ *
+ * ``path`` is relative to ``/api/plugins/{pluginId}/api``, e.g. ``/status``.
+ */
+export async function callPluginApi<T = Record<string, unknown>>(
+  pluginId: string,
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const options: RequestInit = { method };
+  if (body !== undefined) {
+    options.headers = { "Content-Type": "application/json" };
+    options.body = JSON.stringify(body);
+  }
+  const res = await apiFetch(`${BASE}/plugins/${pluginId}/api${path}`, options);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Plugin API ${method} ${path} failed: ${res.status}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 export interface ProviderModel {
@@ -524,10 +583,16 @@ export interface ProviderModel {
   display_name: string;
 }
 
+export async function fetchProviderTypes(): Promise<ProviderType[]> {
+  const res = await apiFetch(`${BASE}/provider-types`);
+  if (!res.ok) throw new Error(`Failed to fetch provider types: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchProviderModels(
   providerId: string
 ): Promise<ProviderModel[]> {
-  const res = await fetch(`${BASE}/providers/${providerId}/models`);
+  const res = await apiFetch(`${BASE}/providers/${providerId}/models`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Failed to fetch models: ${res.status}`);
@@ -541,7 +606,7 @@ export async function fetchProviderModels(
 
 export async function healthCheck(): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/health`);
+    const res = await apiFetch(`${BASE}/health`);
     return res.ok;
   } catch {
     return false;
@@ -556,10 +621,12 @@ export interface AppSettings {
   heartbeat_interval_minutes: number;
   emotion_decay_rate: number;
   loneliness_threshold: number;
+  memory_llm_extraction: boolean;
+  memory_episodic_summary: boolean;
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
-  const res = await fetch(`${BASE}/settings`);
+  const res = await apiFetch(`${BASE}/settings`);
   if (!res.ok) throw new Error(`Failed to fetch settings: ${res.status}`);
   return res.json();
 }
@@ -567,7 +634,7 @@ export async function fetchSettings(): Promise<AppSettings> {
 export async function updateSettings(
   updates: Partial<AppSettings>
 ): Promise<AppSettings> {
-  const res = await fetch(`${BASE}/settings`, {
+  const res = await apiFetch(`${BASE}/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -596,16 +663,76 @@ export interface PluginInfo {
   load_error: string | null;
   installed_at: string;
   updated_at: string;
+  plugin_api: PluginAPI | null;
+  has_config: boolean;
+}
+
+export interface PluginScanResult {
+  plugins: PluginInfo[];
+  discovered: number;
+  invalid: string[];
+}
+
+export interface PluginConfigField {
+  key: string;
+  label: string;
+  input_type: "text" | "password" | "select";
+  required: boolean;
+  secret: boolean;
+  default: string;
+  placeholder: string;
+  help_text: string;
+  options: CustomProviderOption[];
+  summary: boolean;
+}
+
+export interface PluginAction {
+  key: string;
+  label: string;
+  method: string;
+  path: string;
+  confirm: boolean;
+}
+
+export interface PluginConfig {
+  fields: PluginConfigField[];
+  values: Record<string, string>;
+  actions: PluginAction[];
+}
+
+export async function fetchPluginConfig(pluginId: string): Promise<PluginConfig> {
+  const res = await apiFetch(`${BASE}/plugins/${encodeURIComponent(pluginId)}/config`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to fetch plugin config: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function savePluginConfig(
+  pluginId: string,
+  values: Record<string, string>
+): Promise<PluginConfig> {
+  const res = await apiFetch(`${BASE}/plugins/${encodeURIComponent(pluginId)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ values }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to save plugin config: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function fetchPlugins(): Promise<PluginInfo[]> {
-  const res = await fetch(`${BASE}/plugins`);
+  const res = await apiFetch(`${BASE}/plugins`);
   if (!res.ok) throw new Error(`Failed to fetch plugins: ${res.status}`);
   return res.json();
 }
 
 export async function updatePlugin(id: string, enabled: boolean): Promise<PluginInfo> {
-  const res = await fetch(`${BASE}/plugins/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${BASE}/plugins/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
@@ -617,10 +744,18 @@ export async function updatePlugin(id: string, enabled: boolean): Promise<Plugin
   return res.json();
 }
 
-export async function rescanPlugins(): Promise<PluginInfo[]> {
-  const res = await fetch(`${BASE}/plugins/rescan`, { method: "POST" });
-  if (!res.ok) throw new Error(`Failed to rescan plugins: ${res.status}`);
-  return fetchPlugins();
+export async function rescanPlugins(): Promise<PluginScanResult> {
+  const res = await apiFetch(`${BASE}/plugins/rescan`, { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to rescan plugins: ${res.status}`);
+  }
+  const scan = (await res.json()) as { discovered: number; invalid: string[] };
+  return {
+    plugins: await fetchPlugins(),
+    discovered: scan.discovered,
+    invalid: scan.invalid,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +770,7 @@ export interface ImportResult {
 }
 
 export async function importDoubao(sourcePath: string): Promise<ImportResult> {
-  const res = await fetch(`${BASE}/import/doubao`, {
+  const res = await apiFetch(`${BASE}/import/doubao`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_path: sourcePath }),
@@ -643,6 +778,79 @@ export async function importDoubao(sourcePath: string): Promise<ImportResult> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `Import failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Export (full data backup)
+// ---------------------------------------------------------------------------
+
+export interface ExportResult {
+  filename: string;
+  sizeBytes: number;
+  counts: {
+    characters: number;
+    conversations: number;
+    messages: number;
+    memories: number;
+    settings: number;
+  };
+}
+
+/**
+ * Download a full database backup as a JSON file.
+ * The backend streams an attachment; we turn it into a blob and save it.
+ */
+export async function downloadBackup(): Promise<ExportResult> {
+  const res = await apiFetch(`${BASE}/export/all`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Export failed: ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "chitrika-backup.json";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+
+  const contentDisposition = res.headers.get("Content-Disposition") || "";
+  const match = contentDisposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : "chitrika-backup.json";
+  let counts = { characters: 0, conversations: 0, messages: 0, memories: 0, settings: 0 };
+  try {
+    const parsed = JSON.parse(await blob.text());
+    counts = parsed.counts || counts;
+  } catch {
+    // Backup download worked; counts are informational only.
+  }
+  return { filename, sizeBytes: blob.size, counts };
+}
+
+export interface RestoreResult {
+  status: string;
+  characters_created: number;
+  characters_skipped: number;
+  conversations_created: number;
+  conversations_skipped: number;
+  messages_created: number;
+  messages_skipped: number;
+  memories_created: number;
+  memories_skipped: number;
+}
+
+/** Upload a backup JSON file and merge it into the current database. */
+export async function restoreBackup(file: File): Promise<RestoreResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await apiFetch(`${BASE}/restore`, { method: "POST", body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Restore failed: ${res.status}`);
   }
   return res.json();
 }
@@ -675,7 +883,7 @@ export async function runDebugAction(
   action: string,
   body: DebugActionRequest
 ): Promise<DebugActionResponse> {
-  const res = await fetch(`${BASE}/debug/actions/${action}`, {
+  const res = await apiFetch(`${BASE}/debug/actions/${action}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=2.2.0",
     "onnxruntime>=1.22.0",
     "tokenizers>=0.22.0",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]

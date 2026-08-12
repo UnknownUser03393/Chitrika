@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Search,
@@ -12,9 +12,11 @@ import {
   Trash2,
   ArrowDown,
 } from "lucide-react";
-import type { Message, Chat } from "../services/api";
-import { deleteMessage, fetchMessages, recallMessage, streamMessage } from "../services/api";
+import type { Message, Chat, StreamErrorInfo } from "../services/api";
+import { deleteMessage, fetchMessages, recallMessage, streamMessage, synthesizeTTS } from "../services/api";
 import type { Preferences } from "../preferences";
+import { ResponseErrorDialog } from "./ResponseErrorDialog";
+import { ChatMessageBubble } from "./ChatMessageBubble";
 
 interface Props {
   activeChatId: string;
@@ -39,6 +41,7 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
   const [isAwaitingFirstChunk, setIsAwaitingFirstChunk] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [responseError, setResponseError] = useState<StreamErrorInfo | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
@@ -49,6 +52,83 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
   const pendingStreamTextRef = useRef("");
   const streamingAssistantRef = useRef<Message | null>(null);
   const streamFrameRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const ttsRequestRef = useRef(0);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [ttsLoadingMessageId, setTtsLoadingMessageId] = useState<string | null>(null);
+
+  const stopTTS = useCallback(() => {
+    ttsRequestRef.current += 1;
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+    setSpeakingMessageId(null);
+    setTtsLoadingMessageId(null);
+  }, []);
+
+  const playTTS = useCallback(async (message: Message) => {
+    if (!prefs.tts.enabled || message.role !== "assistant" || !message.content.trim()) {
+      return;
+    }
+
+    const isGPT = prefs.tts.provider === "gptsovits";
+    if (!isGPT && !prefs.tts.apiKey.trim()) {
+      return;
+    }
+    if (isGPT && !prefs.tts.refAudioPath.trim()) {
+      setError("还没有选择 GPT-SoVITS 音色，请先在设置里选一个参考音频");
+      return;
+    }
+
+    const requestId = ttsRequestRef.current + 1;
+    ttsRequestRef.current = requestId;
+    stopTTS();
+    ttsRequestRef.current = requestId;
+    setTtsLoadingMessageId(message.id);
+
+    try {
+      const blob = await synthesizeTTS({
+        provider: prefs.tts.provider,
+        text: message.content,
+        api_key: prefs.tts.apiKey,
+        base_url: prefs.tts.baseUrl,
+        model: prefs.tts.model,
+        voice: prefs.tts.voice,
+        speed: prefs.tts.speed,
+        ref_audio_path: isGPT ? prefs.tts.refAudioPath : undefined,
+        prompt_text: isGPT ? prefs.tts.promptText : undefined,
+        text_lang: isGPT ? prefs.tts.textLang : undefined,
+        prompt_lang: isGPT ? prefs.tts.promptLang : undefined,
+      });
+      if (ttsRequestRef.current !== requestId) return;
+
+      const audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audioUrlRef.current = audioUrl;
+      setTtsLoadingMessageId(null);
+      setSpeakingMessageId(message.id);
+      audio.onended = stopTTS;
+      audio.onerror = stopTTS;
+      await audio.play();
+    } catch (err) {
+      if (ttsRequestRef.current === requestId) {
+        setError(err instanceof Error ? err.message : "Failed to play speech");
+        stopTTS();
+      }
+    }
+  }, [prefs.tts, stopTTS]);
+
+  useEffect(() => stopTTS, [stopTTS]);
+
+  // If the user toggles TTS off, stop any in-flight speech.
+  useEffect(() => {
+    if (!prefs.tts.enabled) stopTTS();
+  }, [prefs.tts.enabled, stopTTS]);
 
   useEffect(() => {
     if (!messageMenu) return;
@@ -75,6 +155,7 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setResponseError(null);
     setIsAwaitingFirstChunk(false);
     bufferedReplyRef.current = "";
     pendingStreamTextRef.current = "";
@@ -257,6 +338,14 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
         bufferedReplyRef.current = "";
         pendingStreamTextRef.current = "";
         streamingAssistantRef.current = null;
+        if (prefs.tts.enabled && prefs.tts.autoPlay) {
+          void playTTS({
+            ...assistantMessage,
+            id: messageId || assistantMessage.id,
+            content: messageText,
+            time: replyTime,
+          });
+        }
       },
       // -- onStreamEnd -----------------------------------------
       () => {
@@ -268,8 +357,13 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
         onChatListChanged?.();
       },
       // -- onError ---------------------------------------------
-      (errMsg) => {
-        setError(errMsg);
+      (streamError) => {
+        const partial = pendingStreamTextRef.current || bufferedReplyRef.current;
+        const failedMessageId = streamError.message_id || assistantMessage.id;
+        const replyTime = new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
         setIsTyping(false);
         setIsAwaitingFirstChunk(false);
         bufferedReplyRef.current = "";
@@ -279,7 +373,23 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
           cancelAnimationFrame(streamFrameRef.current);
           streamFrameRef.current = null;
         }
-        setMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
+        setMessages((prev) => {
+          const idx = prev.findIndex((m) => m.id === assistantMessage.id);
+          const failedMessage: Message = {
+            ...assistantMessage,
+            id: failedMessageId,
+            content: partial,
+            time: replyTime,
+            generation_status: streamError.code === "stream_disconnected" ? "interrupted" : "error",
+            error_detail: streamError.details,
+          };
+          if (idx < 0) return [...prev, failedMessage];
+          const updated = [...prev];
+          updated[idx] = { ...updated[idx], ...failedMessage };
+          return updated;
+        });
+        setResponseError(streamError);
+        onChatListChanged?.();
       },
       // -- onUserMessageSaved ----------------------------------
       (userMessageId) => {
@@ -288,7 +398,7 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
         );
       }
     );
-  }, [input, isTyping, activeChatId, onChatListChanged, prefs.streamResponses, scheduleStreamingFlush]);
+  }, [input, isTyping, activeChatId, onChatListChanged, playTTS, prefs.streamResponses, prefs.tts.autoPlay, prefs.tts.enabled, scheduleStreamingFlush]);
 
   const handleRecall = useCallback(
     async (messageId: string) => {
@@ -431,12 +541,29 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
                       msg.role === "assistant" &&
                       (!prev || prev.role === "user");
                     return (
-                      <MessageBubble
+                      <ChatMessageBubble
                         key={msg.id}
                         message={msg}
                         chat={chat || undefined}
                         showAvatar={showAvatar}
                         showTimestamp={prefs.showTimestamps}
+                        ttsEnabled={prefs.tts.enabled && (
+                          prefs.tts.provider === "gptsovits"
+                            ? Boolean(prefs.tts.refAudioPath.trim())
+                            : Boolean(prefs.tts.apiKey.trim())
+                        )}
+                        isSpeaking={speakingMessageId === msg.id}
+                        isTtsLoading={ttsLoadingMessageId === msg.id}
+                        onSpeak={playTTS}
+                        onStopSpeaking={stopTTS}
+                        onGenerationError={(message) => setResponseError({
+                          code: message.generation_status || "generation_error",
+                          message: message.generation_status === "interrupted"
+                            ? "The stream disconnected while responding."
+                            : "The upstream model failed while responding.",
+                          details: message.error_detail || "No technical details were stored.",
+                          message_id: message.id,
+                        })}
                         onOpenMenu={openMessageMenu}
                       />
                     );
@@ -527,6 +654,10 @@ export function ChatArea({ activeChatId, chat, prefs, refreshKey, onChatListChan
           }}
         />
       )}
+      <ResponseErrorDialog
+        error={responseError}
+        onClose={() => setResponseError(null)}
+      />
     </div>
   );
 }
@@ -581,139 +712,6 @@ function EmptyChat({ chat }: { chat: Chat | null }) {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({
-  message,
-  chat,
-  showAvatar,
-  showTimestamp,
-  onOpenMenu,
-}: {
-  message: Message;
-  chat?: Chat;
-  showAvatar: boolean;
-  showTimestamp: boolean;
-  onOpenMenu: (message: Message, x: number, y: number) => void;
-}) {
-  const isUser = message.role === "user";
-  const isRecalled = message.content.startsWith("(recalled) ");
-  const segments = useMemo(
-    () => (
-      isUser
-        ? [message.content.replace(/\r\n/g, "\n").trimEnd()]
-        : splitAssistantBubbleSegments(message.content)
-    ),
-    [isUser, message.content]
-  );
-
-  if (isRecalled) {
-    return (
-      <motion.div
-        onContextMenu={(event) => {
-          event.preventDefault();
-          onOpenMenu(message, event.clientX, event.clientY);
-        }}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, transition: { duration: 0.12 } }}
-        transition={{ duration: 0.18, ease: "easeOut" }}
-        className="flex justify-center my-2"
-      >
-        <div
-          className="px-2.5 py-1 rounded-md text-[var(--app-muted)]"
-          style={{
-            background: "rgba(112,132,153,0.12)",
-            fontSize: "12px",
-            lineHeight: "1.4",
-          }}
-        >
-          You recalled a message
-        </div>
-      </motion.div>
-    );
-  }
-
-  return (
-    <motion.div
-      onContextMenu={(event) => {
-        event.preventDefault();
-        onOpenMenu(message, event.clientX, event.clientY);
-      }}
-      initial={{ opacity: 0, y: 10, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.12 } }}
-      transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className={`group/message flex gap-2 mb-3 ${
-        isUser ? "justify-end items-end" : "justify-start items-start"
-      }`}
-    >
-      {!isUser && (
-        <div className="w-7 shrink-0" style={{ marginTop: "2px" }}>
-          {showAvatar && (
-            <div
-              className="w-7 h-7 rounded-full flex items-center justify-center text-white"
-              style={{
-                background: chat?.color || "var(--app-accent)",
-                fontSize: "11px",
-                fontWeight: 700,
-              }}
-            >
-              {chat?.initials || "?"}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className={`relative flex flex-col gap-1.5 max-w-[min(76%,680px)] ${isUser ? "items-end" : "items-start"}`}>
-        {segments.map((segment, index) => {
-          const isFirst = index === 0;
-          const isLast = index === segments.length - 1;
-          return (
-            <div
-              key={`${message.id}-${index}`}
-              className="max-w-full px-4 py-2.5 relative shadow-sm backdrop-blur"
-              style={{
-                background: isUser ? "var(--app-user-bubble)" : "var(--app-assistant-bubble)",
-                border: isUser
-                  ? "1px solid color-mix(in srgb, var(--app-accent-strong) 30%, transparent)"
-                  : "1px solid var(--app-border)",
-                borderRadius: getBubbleRadius(isUser, isFirst, isLast, segments.length),
-                boxShadow: isUser
-                  ? "0 8px 20px rgba(0,0,0,0.12)"
-                  : "0 6px 18px rgba(0,0,0,0.08)",
-              }}
-            >
-              <p
-                className="whitespace-pre-wrap break-words"
-                style={{
-                  fontSize: "var(--app-font-bubble)",
-                  lineHeight: "1.6",
-                  color: isUser ? "white" : "var(--app-text)",
-                }}
-              >
-                {segment}
-              </p>
-            </div>
-          );
-        })}
-        {showTimestamp && message.time && (
-          <div
-            className={`pointer-events-none absolute -bottom-4 whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover/message:opacity-60 ${
-              isUser ? "right-1" : "left-1"
-            }`}
-            style={{
-              fontSize: "11px",
-              lineHeight: 1,
-              color: "var(--app-muted)",
-            }}
-          >
-            {message.time}
-          </div>
-        )}
-      </div>
-    </motion.div>
-  );
-});
-
 function MessageContextMenu({
   state,
   onRecall,
@@ -761,64 +759,6 @@ function MessageContextMenu({
       )}
     </div>
   );
-}
-
-function getBubbleRadius(
-  isUser: boolean,
-  isFirst: boolean,
-  isLast: boolean,
-  count: number
-): string {
-  if (count === 1) {
-    return isUser ? "14px 14px 5px 14px" : "14px 14px 14px 5px";
-  }
-
-  if (isUser) {
-    if (isFirst) return "14px 14px 5px 14px";
-    if (isLast) return "14px 5px 5px 14px";
-    return "14px 5px 5px 14px";
-  }
-
-  if (isFirst) return "14px 14px 14px 5px";
-  if (isLast) return "5px 14px 14px 5px";
-  return "5px 14px 14px 5px";
-}
-
-function splitAssistantBubbleSegments(content: string): string[] {
-  const normalized = content.replace(/\r\n/g, "\n").trimEnd();
-  if (!normalized) {
-    return [""];
-  }
-
-  if (normalized.includes("```")) {
-    return [normalized.replace(/\n{3,}/g, "\n\n")];
-  }
-
-  const parts = normalized
-    .split(/\n{2,}/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (parts.length <= 1) {
-    return [normalized];
-  }
-
-  const shouldSplit =
-    normalized.length <= 520 &&
-    parts.length <= 6 &&
-    parts.every((part) => part.length <= 96 && !looksLikeStructuredBlock(part));
-
-  if (!shouldSplit) {
-    return [normalized.replace(/\n{3,}/g, "\n\n")];
-  }
-
-  return parts;
-}
-
-function looksLikeStructuredBlock(text: string): boolean {
-  return text
-    .split("\n")
-    .some((line) => /^\s*(?:[-*]|\d+[.)]|#{1,6}\s|>\s)/.test(line));
 }
 
 function TypingIndicator({ chat }: { chat: Chat | null }) {

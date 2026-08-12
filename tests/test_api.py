@@ -25,6 +25,14 @@ def test_health(client: TestClient):
     assert "version" in data
 
 
+def test_api_requires_matching_bearer_token(client: TestClient):
+    assert client.get("/api/health", headers={"Authorization": ""}).status_code == 401
+    assert client.get(
+        "/api/health", headers={"Authorization": "Bearer wrong-token"}
+    ).status_code == 401
+    assert client.get("/api/health").status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Characters
 # ---------------------------------------------------------------------------
@@ -363,12 +371,11 @@ def test_send_message_stream(client: TestClient, seeded_character):
     assert "\u4f60\u597d" in text
 
 
-def test_stream_response_single_message(session, seeded_character):
+def test_stream_response_single_message(session, seeded_character, monkeypatch):
     """The entire LLM response is delivered as one message bubble."""
-    from sqlmodel import select
-
-    from src.chitrika.engines.chat_engine import ChatEngine
-    from src.chitrika.models.message import Message
+    from src.chitrika.repositories.chat_repository import ChatRepository
+    from src.chitrika.application import chat_stream_runtime
+    from src.chitrika.services.chat_generation_service import PreparedGeneration
 
     class Chunk:
         def __init__(self, content: str):
@@ -379,39 +386,52 @@ def test_stream_response_single_message(session, seeded_character):
             yield Chunk("\u7b2c\u4e00\u53e5\u3002")
             yield Chunk("\u7b2c\u4e8c\u53e5\uff01\n\u7b2c\u4e09\u53e5")
 
-    engine = ChatEngine(session, llm_provider=FakeLLM(), model_name="fake")
+    engine = ChatRepository(session)
     conv = engine.create_conversation(seeded_character.id)
-
-    events = list(engine.stream_response(conv.id, "\u4f60\u597d"))
+    persisted: dict[str, str] = {}
+    monkeypatch.setattr(
+        chat_stream_runtime,
+        "_persist_assistant",
+        lambda _prepared, content, status, _detail=None: persisted.update(
+            content=content, status=status
+        ),
+    )
+    monkeypatch.setattr(chat_stream_runtime, "_post_process", lambda *_args: None)
+    prepared = PreparedGeneration(
+        conversation_id=conv.id,
+        character_id=seeded_character.id,
+        user_content="\u4f60\u597d",
+        user_message_id="user-message",
+        assistant_message_id="assistant-message",
+        llm=FakeLLM(),
+        model_name="fake",
+        llm_messages=[],
+    )
+    events = list(chat_stream_runtime.stream_prepared_response(prepared))
 
     assert sum('"type":"start"' in event for event in events) == 1
     assert sum('"type":"done"' in event for event in events) == 1
 
-    messages = list(
-        session.exec(
-            select(Message)
-            .where(Message.conversation_id == conv.id)
-            .order_by(Message.created_at)
-        ).all()
-    )
-    assistant_contents = [m.content for m in messages if m.role == "assistant"]
-    assert assistant_contents == ["\u7b2c\u4e00\u53e5\u3002\u7b2c\u4e8c\u53e5\uff01\n\u7b2c\u4e09\u53e5"]
+    assert persisted == {
+        "content": "\u7b2c\u4e00\u53e5\u3002\u7b2c\u4e8c\u53e5\uff01\n\u7b2c\u4e09\u53e5",
+        "status": "complete",
+    }
 
 
 def test_post_process_emotions_uses_nuanced_signals(session, seeded_character):
     """A mixed message should update multiple emotion dimensions."""
-    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.services.chat_post_processor import ChatPostProcessor
 
-    engine = ChatEngine(session)
-    engine._emotion.get_or_create_state(seeded_character.id)
+    processor = ChatPostProcessor(session)
+    processor.emotions.get_or_create_state(seeded_character.id)
 
-    engine._post_process_emotions(
+    processor.update_emotions(
         seeded_character.id,
         "\u6211\u6709\u70b9\u62c5\u5fc3\uff0c\u4e5f\u5f88\u671f\u5f85\u4f60\u56de\u6765\uff0c\u8c22\u8c22\uff01",
         "\u6211\u4e5f\u5f88\u5f00\u5fc3\uff0c\u8c22\u8c22\u4f60\u544a\u8bc9\u6211\u3002",
     )
 
-    analysis = engine._emotion.analyse(seeded_character.id, apply_decay_before=False)
+    analysis = processor.emotions.analyse(seeded_character.id, apply_decay_before=False)
     emotions = analysis["emotions"]
 
     assert emotions["trust"] > 0 or emotions["joy"] > 0 or emotions["anticipation"] > 0
@@ -421,7 +441,7 @@ def test_post_process_emotions_uses_nuanced_signals(session, seeded_character):
 
 def test_post_process_emotions_tracks_assistant_emotion_not_user_emotion(session, seeded_character):
     """User fear should not be counted as the assistant character's emotion."""
-    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.services.chat_post_processor import ChatPostProcessor
     from src.chitrika.utils.emotion_nlp import classify_emotion_delta
 
     user_text = "\u60f3\u6b7b\u4f60\u4e86\u3002\u90a3... \u80fd\u966a\u6211\u804a\u4f1a\u513f\u5417\uff1f\u554a\u554a\u554a\u5bc6\u5ba4\uff01\u6211\u4e0a\u6b21\u53bb\u5fae\u6050\u7ed9\u6211\u5413\u54ed\u4e86\u3002"
@@ -433,11 +453,11 @@ def test_post_process_emotions_tracks_assistant_emotion_not_user_emotion(session
     assert direct.get("fear", 0.0) == 0.0
     assert "sadness" not in direct or direct["sadness"] < direct["joy"]
 
-    engine = ChatEngine(session)
-    engine._emotion.get_or_create_state(seeded_character.id)
-    engine._post_process_emotions(seeded_character.id, user_text, assistant_text)
+    processor = ChatPostProcessor(session)
+    processor.emotions.get_or_create_state(seeded_character.id)
+    processor.update_emotions(seeded_character.id, user_text, assistant_text)
 
-    analysis = engine._emotion.analyse(seeded_character.id, apply_decay_before=False)
+    analysis = processor.emotions.analyse(seeded_character.id, apply_decay_before=False)
     emotions = analysis["emotions"]
 
     assert emotions["joy"] > 0 or emotions["trust"] > 0 or emotions["anticipation"] > 0
@@ -446,12 +466,12 @@ def test_post_process_emotions_tracks_assistant_emotion_not_user_emotion(session
 
 def test_chat_extracts_and_reinforces_long_term_user_facts(session, seeded_character):
     """Explicit self-disclosures become durable memories without an LLM."""
-    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.services.chat_post_processor import ChatPostProcessor
     from src.chitrika.models.memory import Memory
     from sqlmodel import select
 
-    engine = ChatEngine(session)
-    engine._post_process_memories(
+    processor = ChatPostProcessor(session)
+    processor.extract_memories(
         seeded_character.id,
         "我叫小林，我喜欢爵士乐。",
         "记住啦。",
@@ -471,7 +491,7 @@ def test_chat_extracts_and_reinforces_long_term_user_facts(session, seeded_chara
 
     original = next(memory for memory in durable if memory.content == "用户喜欢爵士乐")
     original_importance = original.importance
-    engine._post_process_memories(
+    processor.extract_memories(
         seeded_character.id,
         "我也喜欢爵士乐。",
         "我记得。",
@@ -489,20 +509,23 @@ def test_chat_extracts_and_reinforces_long_term_user_facts(session, seeded_chara
 
 def test_proactive_fallback_delivers_without_provider(session, seeded_character):
     """Offline heartbeat messages must contain text and reach the chat."""
-    from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
     from src.chitrika.models.conversation import Conversation
     from src.chitrika.models.emotion import EmotionState
     from src.chitrika.models.heartbeat import ScheduledMessage
     from src.chitrika.models.message import Message
+    from src.chitrika.services.heartbeat_services import (
+        ProactiveMessagingService,
+        ScheduledMessageDeliveryService,
+    )
     from sqlmodel import select
 
-    engine = HeartbeatEngine.__new__(HeartbeatEngine)
+    proactive = ProactiveMessagingService(session, loneliness_threshold=0.6)
     state = session.exec(
         select(EmotionState).where(EmotionState.character_id == seeded_character.id)
     ).one()
     state.sadness = 0.8
 
-    engine._initiate_proactive(session, seeded_character, state, loneliness=0.85)
+    proactive.consider(seeded_character, state, loneliness=0.85)
     scheduled = session.exec(
         select(ScheduledMessage).where(
             ScheduledMessage.character_id == seeded_character.id
@@ -510,7 +533,7 @@ def test_proactive_fallback_delivers_without_provider(session, seeded_character)
     ).one()
     assert scheduled.content
 
-    engine._deliver_due_messages(session)
+    ScheduledMessageDeliveryService(session).deliver_due()
     delivered = session.exec(
         select(Message).where(Message.scheduled_message_id == scheduled.id)
     ).one()
@@ -518,7 +541,7 @@ def test_proactive_fallback_delivers_without_provider(session, seeded_character)
     assert scheduled.status == "sent"
     assert session.get(Conversation, scheduled.conversation_id) is not None
 
-    engine._initiate_proactive(session, seeded_character, state, loneliness=0.9)
+    proactive.consider(seeded_character, state, loneliness=0.9)
     scheduled_rows = session.exec(
         select(ScheduledMessage).where(
             ScheduledMessage.character_id == seeded_character.id
@@ -554,8 +577,8 @@ def test_debug_action_forces_loneliness_proactive_message(client: TestClient, se
 def test_heartbeat_schedules_after_long_user_absence(session, seeded_character):
     """A neutral companion eventually reaches the proactive threshold."""
     from datetime import timedelta
-    from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
     from src.chitrika.models.heartbeat import ScheduledMessage
+    from src.chitrika.services.heartbeat_services import CharacterMaintenanceService
     from src.chitrika.utils.datetime_helpers import utcnow
     from sqlmodel import select
 
@@ -563,10 +586,9 @@ def test_heartbeat_schedules_after_long_user_absence(session, seeded_character):
     session.add(seeded_character)
     session.commit()
 
-    engine = HeartbeatEngine.__new__(HeartbeatEngine)
-    engine.LONELINESS_THRESHOLD = 0.6
-    engine._get_decay_rate = lambda: 0.15
-    engine._process_character(session, seeded_character)
+    CharacterMaintenanceService(
+        session, decay_rate=0.15, loneliness_threshold=0.6
+    ).maintain(seeded_character)
 
     scheduled = session.exec(
         select(ScheduledMessage).where(
@@ -578,7 +600,7 @@ def test_heartbeat_schedules_after_long_user_absence(session, seeded_character):
 
 
 def test_relative_time_uses_readable_chinese_labels():
-    from src.chitrika.engines.chat_engine import _relative_time
+    from src.chitrika.repositories.chat_repository import _relative_time
     from src.chitrika.utils.datetime_helpers import utcnow
 
     now = utcnow()
@@ -764,10 +786,10 @@ def test_conversation_list_enriched(client: TestClient, seeded_character):
 
 
 def test_conversation_list_uses_batched_enrichment(session, seeded_character):
-    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.repositories.chat_repository import ChatRepository
     from src.chitrika.models.message import Message
 
-    engine = ChatEngine(session)
+    engine = ChatRepository(session)
     conversations = [
         engine.create_conversation(seeded_character.id)
         for _ in range(3)
@@ -904,17 +926,17 @@ def test_heartbeat_status(client: TestClient):
 def test_heartbeat_uses_injected_session_factory(session, seeded_character):
     from sqlmodel import select
 
-    from src.chitrika.engines.heartbeat_engine import HeartbeatEngine
     from src.chitrika.models.heartbeat import HeartbeatTask
+    from src.chitrika.services.heartbeat_scheduler import HeartbeatScheduler
 
     @contextmanager
     def _session_factory():
         yield session
 
-    engine = HeartbeatEngine(session_factory=_session_factory)
+    engine = HeartbeatScheduler(session_factory=_session_factory)
     engine.tick()
 
-    assert engine.status["tick_count"] == 1
+    assert engine.status.tick_count == 1
     task = session.exec(
         select(HeartbeatTask).where(HeartbeatTask.character_id == seeded_character.id)
     ).first()

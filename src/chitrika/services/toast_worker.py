@@ -37,7 +37,7 @@ def main() -> None:
     from src.toastlib.toastlib import DurationShort, registerApplication, showNotify
 
     app_name = "Chitrika"
-    aumid = registerApplication(app_name)
+    registerApplication(app_name)
 
     # Signal ready
     print(json.dumps({"type": "ready"}), flush=True)

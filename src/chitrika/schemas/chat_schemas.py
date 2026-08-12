@@ -60,6 +60,8 @@ class MessageResponse(BaseModel):
     created_at: datetime
     edited_at: datetime | None = None
     is_deleted: bool = False
+    generation_status: str = "complete"
+    error_detail: str | None = None
 
 
 class ChatResponse(BaseModel):

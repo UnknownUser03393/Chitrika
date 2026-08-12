@@ -7,6 +7,25 @@ from src.llmproviders.LLMProvider import LLMProvider, ModelNotFoundError, Authen
 	Model, CompletionRequest, Message, CompletionResponse, StreamChunk
 
 
+def _extract_error_message(response: httpx.Response) -> str:
+	"""Best-effort parse of OpenAI-style error bodies."""
+	try:
+		error_data = response.json() if response.text else {}
+	except Exception:
+		return ''
+	if not isinstance(error_data, dict):
+		return ''
+	error = error_data.get('error')
+	if isinstance(error, dict):
+		message = error.get('message')
+		if isinstance(message, str) and message.strip():
+			return message.strip()
+	message = error_data.get('message')
+	if isinstance(message, str) and message.strip():
+		return message.strip()
+	return ''
+
+
 class OpenAIClient(LLMProvider):
 
 	def __init__(self, apiKey: str, baseUrl: str = 'https://api.openai.com/v1', timeout: float = 60.0):
@@ -22,21 +41,25 @@ class OpenAIClient(LLMProvider):
 		return self._asyncClient
 
 	def _getHeaders(self) -> dict[str, str]:
-		return {
-			'Authorization': f'Bearer {self.apiKey}',
-			'Content-Type': 'application/json',
-		}
+		# Local OpenAI-compatible servers (Ollama, LM Studio, etc.) often need
+		# no auth. Only send Bearer when a key is actually configured.
+		headers = {'Content-Type': 'application/json'}
+		if self.apiKey and self.apiKey.strip():
+			headers['Authorization'] = f'Bearer {self.apiKey.strip()}'
+		return headers
 
 	def _handleError(self, response: httpx.Response) -> None:
 		if response.status_code == 401:
-			raise AuthenticationError('Invalid API key')
+			detail = _extract_error_message(response)
+			raise AuthenticationError(
+				detail or 'Invalid API key (HTTP 401). Check the provider API key in Settings.'
+			)
 		elif response.status_code == 429:
 			raise RateLimitError('Rate limit exceeded')
 		elif response.status_code == 404:
 			raise ModelNotFoundError('Model not found')
 		else:
-			errorData = response.json() if response.text else {}
-			errorMsg = errorData.get('error', {}).get('message', f'HTTP {response.status_code}')
+			errorMsg = _extract_error_message(response) or f'HTTP {response.status_code}'
 			raise LLMError(errorMsg)
 
 	def getModels(self) -> list[Model]:

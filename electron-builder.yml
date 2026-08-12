@@ -1,0 +1,48 @@
+# Chitrika desktop packaging — electron-builder config (run from repo root).
+appId: com.chitrika.desktop
+productName: Chitrika
+electronVersion: 41.1.0
+
+directories:
+  app: src/frontend
+  output: release
+  buildResources: packaging
+
+# Only the Electron shell + production bundle. main.cjs/backend.cjs use only
+# Node built-ins, so node_modules must NOT be packed.
+files:
+  - dist/**
+  - electron/**
+  - "!electron/*.test.cjs"
+  - package.json
+
+# Everything the packaged backend needs, copied next to the exe into
+# resources/. Models are read-only here; writable data (db, plugins, logs)
+# lives in the per-user AppData dir, prepared by the main process on launch.
+extraResources:
+  - from: dist_backend/backend
+    to: backend
+  - from: models
+    to: models
+  - from: plugins/deepseek_local
+    to: seed/plugins/deepseek_local
+  - from: skill_0624.txt
+    to: seed/skill_0624.txt
+
+win:
+  icon: packaging/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Chitrika
+  artifactName: Chitrika-${version}-Setup.${ext}
+
+# No code signing configured — local self-use build.
+forceCodeSigning: false

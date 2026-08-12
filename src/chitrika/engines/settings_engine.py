@@ -17,6 +17,12 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "heartbeat_interval_minutes": 5,
     "emotion_decay_rate": 0.15,
     "loneliness_threshold": 0.6,
+    # Off by default: LLM-based memory extraction costs tokens per message.
+    # The regex extractor always runs regardless as a free fallback.
+    "memory_llm_extraction": False,
+    # Off by default: compressing short-term chatter into episodic narrative
+    # memories costs an LLM call every time a short-term batch fills up.
+    "memory_episodic_summary": False,
 }
 
 # Known setting keys and their expected types for safe coercion.
@@ -24,6 +30,8 @@ SETTING_TYPES: dict[str, type] = {
     "heartbeat_interval_minutes": int,
     "emotion_decay_rate": float,
     "loneliness_threshold": float,
+    "memory_llm_extraction": bool,
+    "memory_episodic_summary": bool,
 }
 
 
@@ -52,7 +60,7 @@ class SettingsEngine:
             return setting.value
 
     def set(self, key: str, value: object) -> None:
-        """Create or update a single setting (auto-commits)."""
+        """Create or update a single setting in the caller's transaction."""
         setting = self.session.get(Setting, key)
         raw = json.dumps(value, ensure_ascii=False)
         if setting is None:
@@ -60,7 +68,7 @@ class SettingsEngine:
             self.session.add(setting)
         else:
             setting.value = raw
-        self.session.commit()
+        self.session.flush()
         logger.debug("Setting %s = %s", key, value)
 
     def delete(self, key: str) -> bool:
@@ -69,7 +77,7 @@ class SettingsEngine:
         if setting is None:
             return False
         self.session.delete(setting)
-        self.session.commit()
+        self.session.flush()
         return True
 
     # ------------------------------------------------------------------
@@ -112,5 +120,5 @@ class SettingsEngine:
                 )
                 count += 1
         if count:
-            self.session.commit()
+            self.session.flush()
         return count

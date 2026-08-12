@@ -28,6 +28,9 @@ SKIP_PARTS = {
     "__pycache__",
     "node_modules",
     "dist",
+    "build_backend",
+    "dist_backend",
+    "release",
     "models",
     "MEC",
 }

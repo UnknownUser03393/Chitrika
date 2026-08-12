@@ -6,10 +6,14 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from sqlmodel import Session, select
+from sqlmodel import Session
 
-from src.chitrika.database import get_session
-from src.chitrika.engines.chat_engine import _relative_time
+from src.chitrika.application.chat_stream_service import ChatStreamApplicationService
+from src.chitrika.database import get_session, get_transactional_session
+from src.chitrika.application.chat_service import (
+    ConversationApplicationService,
+    MessageApplicationService,
+)
 from src.chitrika.schemas.chat_schemas import (
     ChatResponse,
     ConversationBatchRequest,
@@ -28,39 +32,6 @@ router = APIRouter(tags=["chat"])
 
 
 # ---------------------------------------------------------------------------
-# Dependency: resolve LLM provider from character's configured provider
-# ---------------------------------------------------------------------------
-
-def _get_llm(
-    session: Session,
-    *,
-    provider_id: str | None = None,
-    provider_name: str | None = None,
-):
-    """Create an LLM client for a provider id or fallback provider name.
-
-    Returns (client, model_name) tuple, or (None, "") if no provider is found.
-    """
-    from src.chitrika.services.provider_service import (
-        resolve_provider_for_character,
-        create_llm_client,
-    )
-
-    provider = resolve_provider_for_character(
-        session,
-        provider_name=provider_name,
-        provider_id=provider_id,
-    )
-    if provider is None:
-        logger.warning("No provider found for character")
-        return None, ""
-
-    client = create_llm_client(provider.api_key, provider.base_url)
-    model_name = provider.default_model or ""
-    return client, model_name
-
-
-# ---------------------------------------------------------------------------
 # Conversation list — GET /api/conversations  (also /api/chats for compat)
 # ---------------------------------------------------------------------------
 
@@ -71,11 +42,7 @@ def list_conversations(
     session: Session = Depends(get_session),
 ) -> list[ChatResponse]:
     """List all conversations, enriched for the frontend ChatListView."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
-    chats = engine.list_conversations(character_id=character_id)
-    return [ChatResponse(**c) for c in chats]
+    return ConversationApplicationService(session).list(character_id)
 
 
 # Frontend compatibility alias
@@ -96,15 +63,13 @@ def list_chats(
 @router.post("/conversations", status_code=201)
 def create_conversation(
     body: ConversationCreate,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> ConversationDetail:
     """Create a new conversation with a character."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
     try:
-        conv = engine.create_conversation(body.character_id, title=body.title)
-        return ConversationDetail.model_validate(conv)
+        return ConversationApplicationService(session).create(
+            body.character_id, body.title
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -117,37 +82,21 @@ def create_conversation(
 @router.post("/conversations/batch/delete")
 def batch_delete_conversations(
     body: ConversationBatchRequest | list[str],
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> ConversationBatchResponse:
     """Delete multiple conversations and all their messages."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
     ids = _conversation_batch_ids(body)
-    engine = ChatEngine(session)
-    affected, missing_ids = engine.delete_conversations(ids)
-    return ConversationBatchResponse(
-        requested=len(ids),
-        affected=affected,
-        missing_ids=missing_ids,
-    )
+    return ConversationApplicationService(session).delete_batch(ids)
 
 
 @router.post("/conversations/batch/clear-messages")
 def batch_clear_conversation_messages(
     body: ConversationBatchRequest | list[str],
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> ConversationBatchResponse:
     """Clear messages from multiple conversations without deleting them."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
     ids = _conversation_batch_ids(body)
-    engine = ChatEngine(session)
-    affected, missing_ids = engine.clear_conversations_messages(ids)
-    return ConversationBatchResponse(
-        requested=len(ids),
-        affected=affected,
-        missing_ids=missing_ids,
-    )
+    return ConversationApplicationService(session).clear_batch(ids)
 
 
 def _conversation_batch_ids(body: ConversationBatchRequest | list[str]) -> list[str]:
@@ -168,13 +117,10 @@ def get_conversation(
     session: Session = Depends(get_session),
 ) -> ConversationDetail:
     """Get a single conversation by ID."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
-    conv = engine.get_conversation(conversation_id)
+    conv = ConversationApplicationService(session).get(conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return ConversationDetail.model_validate(conv)
+    return conv
 
 
 # ---------------------------------------------------------------------------
@@ -185,14 +131,11 @@ def get_conversation(
 @router.delete("/conversations/{conversation_id}", status_code=204)
 def delete_conversation(
     conversation_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> None:
     """Delete a conversation and all its messages."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
     try:
-        engine.delete_conversation(conversation_id)
+        ConversationApplicationService(session).delete(conversation_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -205,13 +148,10 @@ def delete_conversation(
 @router.post("/conversations/{conversation_id}/read")
 def mark_conversation_read(
     conversation_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Mark all unread assistant messages in a conversation as read."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
-    count = engine.mark_conversation_read(conversation_id)
+    count = ConversationApplicationService(session).mark_read(conversation_id)
     return {"marked_read": count}
 
 
@@ -228,24 +168,8 @@ def get_messages(
     session: Session = Depends(get_session),
 ) -> MessageListResponse:
     """Get messages for a conversation, newest last."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
-    messages = engine.get_messages(conversation_id, limit=limit, before_id=before)
-
-    return MessageListResponse(
-        messages=[
-            MessageResponse(
-                id=m.id,
-                role=m.role.value if hasattr(m.role, "value") else m.role,
-                content=m.content,
-                time=_relative_time(m.created_at),
-                created_at=m.created_at,
-                edited_at=m.edited_at,
-                is_deleted=m.is_deleted,
-            )
-            for m in messages
-        ]
+    return MessageApplicationService(session).list(
+        conversation_id, limit=limit, before_id=before
     )
 
 
@@ -257,14 +181,11 @@ def get_messages(
 @router.delete("/conversations/{conversation_id}/messages", status_code=204)
 def clear_conversation_messages(
     conversation_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> None:
     """Clear all chat messages while keeping the conversation."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
     try:
-        engine.clear_conversation_messages(conversation_id)
+        ConversationApplicationService(session).clear(conversation_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -273,7 +194,6 @@ def clear_conversation_messages(
 def send_message(
     conversation_id: str,
     body: SendMessage,
-    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     """Send a message and stream the AI response via SSE.
 
@@ -283,34 +203,24 @@ def send_message(
         - done    — streaming complete
         - error   — an error occurred
     """
-    from src.chitrika.engines.chat_engine import ChatEngine
-    from src.chitrika.models.character import Character
-
-    # Validate conversation exists first
-    engine = ChatEngine(session)
-    conv = engine.get_conversation(conversation_id)
-    if conv is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # Load character to determine provider
-    character = session.exec(
-        select(Character).where(Character.id == conv.character_id)
-    ).first()
-    if character is None:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    # Create LLM client from character's provider
-    llm, model_name = _get_llm(
-        session,
-        provider_id=character.provider_id,
-        provider_name=character.provider.name if character.provider else "deepseek",
-    )
-
-    # Re-create engine with provider for streaming
-    engine = ChatEngine(session, llm_provider=llm, model_name=model_name)
+    service = ChatStreamApplicationService()
+    try:
+        prepared = service.reserve_and_prepare(conversation_id, body.content)
+        if prepared is None:
+            raise HTTPException(
+                status_code=409,
+                detail="A response is already being generated for this conversation",
+            )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to prepare chat stream")
+        raise HTTPException(status_code=500, detail="Failed to prepare response")
 
     return StreamingResponse(
-        engine.stream_response(conversation_id, body.content),
+        service.stream(prepared),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -329,23 +239,11 @@ def send_message(
 def edit_message(
     message_id: str,
     body: MessageEdit,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> MessageResponse:
     """Edit a message's content."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
     try:
-        msg = engine.edit_message(message_id, body.content)
-        return MessageResponse(
-            id=msg.id,
-            role=msg.role.value if hasattr(msg.role, "value") else msg.role,
-            content=msg.content,
-            time=_relative_time(msg.created_at),
-            created_at=msg.created_at,
-            edited_at=msg.edited_at,
-            is_deleted=msg.is_deleted,
-        )
+        return MessageApplicationService(session).edit(message_id, body.content)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -358,23 +256,11 @@ def edit_message(
 @router.post("/messages/{message_id}/recall")
 def recall_message(
     message_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> MessageResponse:
     """Mark a message as recalled."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
     try:
-        msg = engine.recall_message(message_id)
-        return MessageResponse(
-            id=msg.id,
-            role=msg.role.value if hasattr(msg.role, "value") else msg.role,
-            content=msg.content,
-            time=_relative_time(msg.created_at),
-            created_at=msg.created_at,
-            edited_at=msg.edited_at,
-            is_deleted=msg.is_deleted,
-        )
+        return MessageApplicationService(session).recall(message_id)
     except PermissionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
@@ -384,13 +270,10 @@ def recall_message(
 @router.delete("/messages/{message_id}", status_code=204)
 def delete_message(
     message_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> None:
     """Soft-delete a message."""
-    from src.chitrika.engines.chat_engine import ChatEngine
-
-    engine = ChatEngine(session)
     try:
-        engine.delete_message(message_id)
+        MessageApplicationService(session).delete(message_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session
 
-from src.chitrika.database import get_session
+from src.chitrika.database import get_session, get_transactional_session
 
 router = APIRouter(tags=["desktop"])
 
@@ -20,21 +20,21 @@ def get_pending_notifications(
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """Return messages that haven't had a desktop notification yet."""
-    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.repositories.chat_repository import ChatRepository
 
-    engine = ChatEngine(session)
+    engine = ChatRepository(session)
     return engine.get_pending_desktop_notifications(character_id=character_id)
 
 
 @router.post("/desktop/notifications/{message_id}/ack")
 def acknowledge_notification(
     message_id: str,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_transactional_session),
 ) -> dict:
     """Mark a message as having had its desktop notification shown."""
-    from src.chitrika.engines.chat_engine import ChatEngine
+    from src.chitrika.repositories.chat_repository import ChatRepository
 
-    engine = ChatEngine(session)
+    engine = ChatRepository(session)
     ok = engine.acknowledge_desktop_notification(message_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Message not found")

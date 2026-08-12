@@ -1,52 +1,28 @@
-"""Chat Engine — conversation management, message handling, and LLM streaming.
-
-Orchestrates the full send-message flow:
-1. Persist user message
-2. Load character + emotion + memories + history
-3. Build enriched system prompt
-4. Stream from LLM → SSE chunks
-5. Save assistant response
-6. Post-process: update emotions, extract memories
-"""
+"""Conversation and message persistence/query repository."""
 
 from __future__ import annotations
 
 import logging
-import uuid
-from collections.abc import Generator
 from datetime import datetime
 
 from sqlalchemy import and_, func
 from sqlmodel import Session, col, select
 
-from src.chitrika.engines.emotion_engine import EmotionEngine
-from src.chitrika.engines.memory_engine import MemoryEngine
-from src.chitrika.engines.plugin_engine import PluginEngine
-from src.chitrika.engines.relationship_engine import RelationshipEngine
 from src.chitrika.models.character import Character
 from src.chitrika.models.conversation import Conversation
 from src.chitrika.models.heartbeat import ScheduledMessage
 from src.chitrika.models.memory import Memory
 from src.chitrika.models.message import Message
-from src.chitrika.services.prompt_service import PromptService
-from src.chitrika.plugins.api import PromptContext
-from src.chitrika.utils import sse
 from src.chitrika.utils.datetime_helpers import utcnow
 
 logger = logging.getLogger("chitrika.chat")
 
 
-class ChatEngine:
-    """High-level chat operations with LLM integration."""
+class ChatRepository:
+    """Manage conversations and persisted messages for one DB session."""
 
-    def __init__(self, session: Session, llm_provider=None, model_name: str = ""):
+    def __init__(self, session: Session):
         self._session = session
-        self._llm = llm_provider  # OpenAIProvider-compatible, injected
-        self._model_name = model_name
-        self._emotion = EmotionEngine(session)
-        self._memory = MemoryEngine(session)
-        self._relationship = RelationshipEngine(session)
-        self._prompt = PromptService()
 
     # ------------------------------------------------------------------
     # Conversation CRUD
@@ -72,8 +48,7 @@ class ChatEngine:
             title=title,
         )
         self._session.add(conv)
-        self._session.commit()
-        self._session.refresh(conv)
+        self._session.flush()
         return conv
 
     def get_conversation(self, conversation_id: str) -> Conversation | None:
@@ -213,7 +188,7 @@ class ChatEngine:
         for conv in conversations:
             self._session.delete(conv)
 
-        self._session.commit()
+        self._session.flush()
         return len(conversations), missing_ids
 
     def clear_conversation_messages(self, conversation_id: str) -> None:
@@ -248,7 +223,7 @@ class ChatEngine:
             conv.last_message_at = None
             conv.updated_at = now
 
-        self._session.commit()
+        self._session.flush()
         return len(conversations), missing_ids
 
     def mark_conversation_read(self, conversation_id: str) -> int:
@@ -270,7 +245,7 @@ class ChatEngine:
             msg.read_at = now
 
         if unread:
-            self._session.commit()
+            self._session.flush()
 
         return len(unread)
 
@@ -321,7 +296,7 @@ class ChatEngine:
             return False
 
         msg.desktop_notified_at = utcnow()
-        self._session.commit()
+        self._session.flush()
         return True
 
     # ------------------------------------------------------------------
@@ -366,8 +341,7 @@ class ChatEngine:
 
         msg.content = new_content
         msg.edited_at = utcnow()
-        self._session.commit()
-        self._session.refresh(msg)
+        self._session.flush()
         return msg
 
     def recall_message(self, message_id: str) -> Message:
@@ -391,8 +365,7 @@ class ChatEngine:
             if conv is not None:
                 conv.updated_at = utcnow()
 
-            self._session.commit()
-            self._session.refresh(msg)
+            self._session.flush()
 
         return msg
 
@@ -405,279 +378,7 @@ class ChatEngine:
             raise ValueError(f"Message '{message_id}' not found")
 
         msg.is_deleted = True
-        self._session.commit()
-
-    # ------------------------------------------------------------------
-    # Send message (streaming — generator-based)
-    # ------------------------------------------------------------------
-
-    def stream_response(
-        self,
-        conversation_id: str,
-        user_content: str,
-    ) -> Generator[str, None, None]:
-        """Send a user message and yield SSE events for the LLM response.
-
-        Yields strings like:
-            event: message
-            data: {"type":"start","message_id":"..."}
-
-        Usage in FastAPI::
-
-            StreamingResponse(
-                engine.stream_response(conv_id, content),
-                media_type="text/event-stream",
-            )
-
-        Cleaning up (saving assistant message) happens *after* the generator
-        exhausts. If the client disconnects mid-stream, the last yield is
-        a 'done' event that triggers finalization.
-        """
-        # 1. Load and validate conversation
-        conv = self.get_conversation(conversation_id)
-        if conv is None:
-            yield sse.sse_error(f"Conversation '{conversation_id}' not found")
-            return
-
-        # 2. Load character
-        character = self._session.exec(
-            select(Character).where(Character.id == conv.character_id)
-        ).first()
-        if character is None:
-            yield sse.sse_error("Character not found for conversation")
-            return
-
-        # 3. Save user message
-        user_msg = Message(
-            conversation_id=conversation_id,
-            role="user",
-            content=user_content,
-        )
-        self._session.add(user_msg)
-        conv.last_message_at = utcnow()
-        conv.updated_at = utcnow()
-        self._session.commit()
-
-        # 4. Load context
-        try:
-            emotion_state = self._emotion.get_or_create_state(character.id)
-            # Apply decay before generating
-            self._emotion.apply_decay(character.id)
-
-            memories = self._memory.get_relevant(
-                character.id, limit=10, track_access=True
-            )
-            relationship_state = self._relationship.get_or_create(character.id)
-            history = self.get_messages(conversation_id, limit=30)
-
-            # 5. Build prompt
-            system_prompt = self._prompt.build_system_prompt(
-                character=character,
-                emotion_state=emotion_state,
-                memories=memories,
-                relationship_state=relationship_state,
-            )
-            system_prompt = PluginEngine(self._session).apply_system_prompt(
-                PromptContext(
-                    character_id=character.id,
-                    conversation_id=conversation_id,
-                    user_content=user_content,
-                    system_prompt=system_prompt,
-                )
-            )
-            llm_messages = self._prompt.build_messages(
-                character=character,
-                emotion_state=emotion_state,
-                memories=memories,
-                recent_messages=history,
-                system_prompt_override=system_prompt,
-                relationship_state=relationship_state,
-            )
-        except Exception:
-            logger.exception("Failed to build prompt")
-            yield sse.sse_error("Failed to build prompt context")
-            return
-
-        # 6. Stream from LLM — one response = one message bubble.
-        # Newlines inside the response are preserved as line breaks
-        # within the bubble (via CSS whitespace-pre-wrap), not split
-        # into separate messages.
-        assistant_msg_id = str(uuid.uuid4())
-        full_response: list[str] = []
-        error_occurred = False
-
-        try:
-            yield sse.sse_start(assistant_msg_id, user_message_id=user_msg.id)
-
-            if self._llm is None:
-                # --- No LLM provider: return echo for testing ---
-                echo = f"[echo] {user_content}"
-                full_response.append(echo)
-                yield sse.sse_content(echo)
-            else:
-                try:
-                    from src.llmproviders.LLMProvider import Model as LLMModel
-
-                    model_obj = LLMModel(name=self._model_name or "deepseek-chat")
-                    for chunk in self._llm.stream(model_obj, llm_messages):
-                        if chunk.content:
-                            full_response.append(chunk.content)
-                            yield sse.sse_content(chunk.content)
-                except Exception as exc:
-                    logger.exception("LLM streaming failed")
-                    error_occurred = True
-                    yield sse.sse_error(str(exc))
-                    return
-
-            # 7. Save assistant message
-            content = "".join(full_response)
-            if not error_occurred:
-                assistant_msg = Message(
-                    id=assistant_msg_id,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=content,
-                )
-                self._session.add(assistant_msg)
-                conv.last_message_at = utcnow()
-                conv.updated_at = utcnow()
-                self._session.commit()
-
-            yield sse.sse_done(assistant_msg_id, {})
-
-        except GeneratorExit:
-            # Client disconnected — save whatever we have so far
-            partial = "".join(full_response).strip()
-            if partial:
-                assistant_msg = Message(
-                    id=assistant_msg_id,
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=partial,
-                )
-                self._session.add(assistant_msg)
-                conv.last_message_at = utcnow()
-                conv.updated_at = utcnow()
-                self._session.commit()
-            return
-
-        # 8. Post-processing: update emotions
-        try:
-            self._post_process_emotions(character.id, user_content, "".join(full_response))
-        except Exception:
-            logger.exception("Post-process emotion update failed")
-
-        # 9. Post-processing: extract memories
-        try:
-            self._post_process_memories(character.id, user_content, "".join(full_response), user_msg.id)
-        except Exception:
-            logger.exception("Post-process memory extraction failed")
-
-        # 10. Post-processing: advance the long-lived relationship state
-        try:
-            self._relationship.record_interaction(character.id, user_content)
-        except Exception:
-            logger.exception("Post-process relationship update failed")
-
-    # ------------------------------------------------------------------
-    # Post-processing helpers
-    # ------------------------------------------------------------------
-
-    def _post_process_emotions(
-        self,
-        character_id: str,
-        user_text: str,
-        assistant_text: str,
-    ) -> None:
-        """Apply ONNX emotion deltas, falling back to the lightweight local classifier."""
-        from src.chitrika.utils.emotion_nlp import classify_emotion_delta
-        from src.chitrika.utils.emotion_onnx import classify_with_onnx_if_available
-
-        deltas = classify_with_onnx_if_available(user_text, assistant_text)
-        if deltas is None:
-            deltas = classify_emotion_delta(user_text, assistant_text)
-
-        if deltas:
-            self._emotion.update_emotion(character_id, deltas)
-
-    def _post_process_memories(
-        self,
-        character_id: str,
-        user_text: str,
-        assistant_text: str,
-        source_message_id: str,
-    ) -> None:
-        """Extract short-term context and durable user facts.
-
-        This deliberately uses conservative patterns: a missed fact is less
-        damaging than confidently remembering something the user never said.
-        Repeated durable facts are reinforced by ``MemoryEngine.store``.
-        """
-        # Store user message as short-term memory
-        if len(user_text) > 5:
-            emotional_valence = 0.0
-            positive_indicators = [
-                "喜欢", "爱", "好", "开心", "棒", "厉害",
-                "love", "good", "great", "happy",
-            ]
-            negative_indicators = [
-                "讨厌", "烦", "难过", "伤心", "生气",
-                "hate", "bad", "sad", "angry",
-            ]
-
-            for word in positive_indicators:
-                if word in user_text:
-                    emotional_valence += 0.2
-            for word in negative_indicators:
-                if word in user_text:
-                    emotional_valence -= 0.2
-
-            importance = abs(emotional_valence) if emotional_valence != 0 else 0.25
-
-            self._memory.store(
-                character_id=character_id,
-                memory_type="short_term",
-                content=user_text,
-                importance=min(1.0, importance),
-                emotional_valence=max(-1.0, min(1.0, emotional_valence)),
-                source_message_id=source_message_id,
-            )
-
-        # Promote explicit self-disclosures into durable, compact facts.  Keep
-        # this local and deterministic so memory still works without an LLM.
-        import re
-
-        fact_patterns = [
-            (r"(?:我叫|我的名字是)\s*([^，。！？,.!?\n]{1,30})", "用户的名字是{0}"),
-            (r"我(?:很|最|也)?喜欢\s*([^，。！？,.!?\n]{1,50})", "用户喜欢{0}"),
-            (r"我(?:不喜欢|讨厌)\s*([^，。！？,.!?\n]{1,50})", "用户不喜欢{0}"),
-            (r"我住在\s*([^，。！？,.!?\n]{1,50})", "用户住在{0}"),
-            (r"我的生日是\s*([^，。！？,.!?\n]{1,30})", "用户的生日是{0}"),
-            (r"我在\s*([^，。！？,.!?\n]{1,40})\s*(?:工作|上班)", "用户在{0}工作"),
-            (r"\bmy name is\s+([^,.!?\n]{1,30})", "The user's name is {0}"),
-            (r"\bi (?:really )?(?:like|love)\s+([^,.!?\n]{1,50})", "The user likes {0}"),
-            (r"\bi (?:dislike|hate)\s+([^,.!?\n]{1,50})", "The user dislikes {0}"),
-            (r"\bi live in\s+([^,.!?\n]{1,50})", "The user lives in {0}"),
-        ]
-        for pattern, template in fact_patterns:
-            for match in re.finditer(pattern, user_text, flags=re.IGNORECASE):
-                value = match.group(1).strip(" 的了呢啊呀 ")
-                if not value:
-                    continue
-                self._memory.store(
-                    character_id=character_id,
-                    memory_type="long_term",
-                    content=template.format(value),
-                    importance=0.65,
-                    emotional_valence=None,
-                    source_message_id=source_message_id,
-                )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
+        self._session.flush()
 
 def _relative_time(dt: datetime) -> str:
     """Convert a datetime to a human-readable relative time string.
